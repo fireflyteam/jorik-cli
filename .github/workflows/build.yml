@@ -70,7 +70,8 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+          $env:PATH = "C:\Users\Docker\.cargo\bin;C:\Users\Docker\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          if (Get-Command rustup -ErrorAction SilentlyContinue) { rustup default stable }
           cargo build --release --target ${{ env.TARGET }}
 
       - name: Package binary (zip)
