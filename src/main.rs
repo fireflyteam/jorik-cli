@@ -10,11 +10,11 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// CLI to interact with the Jorik webhook server (play/skip/stop/health).
+/// CLI to interact with the Jorik webhook server.
 #[derive(Parser, Debug)]
 #[command(name = "jorik", author, version, about)]
 struct Cli {
-    /// Base URL of the webhook server (e.g., https://jorik.xserv.pp.ua)
+    /// Base URL of the webhook server
     #[arg(
         long,
         global = true,
@@ -23,7 +23,7 @@ struct Cli {
     )]
     base_url: String,
 
-    /// Bearer token for authorization (if required by the server)
+    /// Bearer token for authorization
     #[arg(long, global = true, env = "JORIK_TOKEN")]
     token: Option<String>,
 
@@ -37,43 +37,96 @@ enum Commands {
     Health,
     /// Enqueue audio to play
     Play {
-        /// Query/URL to play (required)
+        /// Query/URL to play
         query: String,
-        /// Guild ID (optional if the server can infer from user_id)
+        /// Guild ID (optional)
         #[arg(long)]
         guild_id: Option<String>,
-        /// Voice channel ID (optional if the server can infer from user_id)
+        /// Voice channel ID (optional)
         #[arg(long)]
         channel_id: Option<String>,
-        /// User ID for context/authorization
+        /// User ID (optional)
         #[arg(long)]
         user_id: Option<String>,
         /// Override display name
         #[arg(long)]
         requested_by: Option<String>,
-        /// Avatar URL to show in Discord
+        /// Avatar URL
         #[arg(long)]
         avatar_url: Option<String>,
     },
     /// Skip the current track
     Skip {
-        /// Guild ID (optional if the server can infer from user_id)
         #[arg(long)]
         guild_id: Option<String>,
-        /// User ID for context/authorization
         #[arg(long)]
         user_id: Option<String>,
     },
     /// Stop playback and clear queue
     Stop {
-        /// Guild ID (optional if the server can infer from user_id)
         #[arg(long)]
         guild_id: Option<String>,
-        /// User ID for context/authorization
         #[arg(long)]
         user_id: Option<String>,
     },
-    /// Obtain and store a bearer token via browser auth
+    /// Pause or resume playback
+    Pause {
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Show the current queue
+    Queue {
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+    },
+    /// Clear the queue
+    Clear {
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Show currently playing track
+    NowPlaying {
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Set loop mode (off, track, queue)
+    Loop {
+        mode: String,
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Toggle 24/7 mode
+    #[command(name = "247")]
+    TwentyFourSeven {
+        /// "on" or "off". If omitted, toggles.
+        state: Option<String>,
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Shuffle the queue
+    Shuffle {
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Login to get a token
     Login,
 }
 
@@ -89,17 +142,35 @@ struct PlayPayload {
 }
 
 #[derive(Serialize)]
-struct SkipPayload {
+struct SimplePayload {
     action: &'static str,
     guild_id: Option<String>,
     user_id: Option<String>,
 }
 
 #[derive(Serialize)]
-struct StopPayload {
+struct QueuePayload {
     action: &'static str,
     guild_id: Option<String>,
     user_id: Option<String>,
+    limit: usize,
+    offset: usize,
+}
+
+#[derive(Serialize)]
+struct LoopPayload {
+    action: &'static str,
+    guild_id: Option<String>,
+    user_id: Option<String>,
+    loop_mode: String,
+}
+
+#[derive(Serialize)]
+struct TwentyFourSevenPayload {
+    action: &'static str,
+    guild_id: Option<String>,
+    user_id: Option<String>,
+    enabled: Option<bool>,
 }
 
 #[tokio::main]
@@ -107,7 +178,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("jorik-cli/0.1.0")
+        .user_agent("jorik-cli/0.2.0")
         .build()
         .context("building HTTP client")?;
 
@@ -135,7 +206,7 @@ async fn main() -> Result<()> {
             post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
         }
         Commands::Skip { guild_id, user_id } => {
-            let payload = SkipPayload {
+            let payload = SimplePayload {
                 action: "skip",
                 guild_id,
                 user_id,
@@ -143,8 +214,86 @@ async fn main() -> Result<()> {
             post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
         }
         Commands::Stop { guild_id, user_id } => {
-            let payload = StopPayload {
+            let payload = SimplePayload {
                 action: "stop",
+                guild_id,
+                user_id,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::Pause { guild_id, user_id } => {
+            let payload = SimplePayload {
+                action: "pause",
+                guild_id,
+                user_id,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::Queue {
+            guild_id,
+            user_id,
+            limit,
+            offset,
+        } => {
+            let payload = QueuePayload {
+                action: "queue",
+                guild_id,
+                user_id,
+                limit,
+                offset,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::Clear { guild_id, user_id } => {
+            let payload = SimplePayload {
+                action: "clear",
+                guild_id,
+                user_id,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::NowPlaying { guild_id, user_id } => {
+            let payload = SimplePayload {
+                action: "nowplaying",
+                guild_id,
+                user_id,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::Loop {
+            mode,
+            guild_id,
+            user_id,
+        } => {
+            let payload = LoopPayload {
+                action: "loop",
+                guild_id,
+                user_id,
+                loop_mode: mode,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::TwentyFourSeven {
+            state,
+            guild_id,
+            user_id,
+        } => {
+            let enabled = match state.as_deref() {
+                Some("on") | Some("true") => Some(true),
+                Some("off") | Some("false") => Some(false),
+                _ => None,
+            };
+            let payload = TwentyFourSevenPayload {
+                action: "247",
+                guild_id,
+                user_id,
+                enabled,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
+        }
+        Commands::Shuffle { guild_id, user_id } => {
+            let payload = SimplePayload {
+                action: "shuffle",
                 guild_id,
                 user_id,
             };
@@ -165,7 +314,13 @@ async fn health(client: &Client, base_url: &str) -> Result<()> {
         .send()
         .await
         .with_context(|| format!("GET {url}"))?;
-    print_response(resp).await
+
+    if resp.status().is_success() {
+        println!("{} Server is healthy", "✔".green());
+    } else {
+        println!("{} Server returned status {}", "✘".red(), resp.status());
+    }
+    Ok(())
 }
 
 async fn post_audio<T: Serialize>(
@@ -188,15 +343,23 @@ async fn print_response(resp: reqwest::Response) -> Result<()> {
     let text = resp.text().await.context("reading response body")?;
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-        let status_colored = color_status(status);
         if let Some(summary) = summarize(&json) {
-            println!("[{}]\n{}", status_colored, summary);
+            println!("{}", summary);
+        } else if !status.is_success() {
+            // Fallback for errors that summarize didn't catch
+            println!("{} Request failed ({})", "✘".red(), status);
+            println!("{}", json);
         } else {
-            println!("[{}]\n{}", status_colored, json.to_string());
+            // Fallback for success
+            println!("{} Success", "✔".green());
+            println!("{}", json);
         }
+    } else if !status.is_success() {
+        println!("{} Request failed ({})", "✘".red(), status);
+        println!("{}", text);
     } else {
-        let status_colored = color_status(status);
-        println!("[{}] {}", status_colored, text);
+        println!("{} Success", "✔".green());
+        println!("{}", text);
     }
 
     Ok(())
@@ -204,95 +367,169 @@ async fn print_response(resp: reqwest::Response) -> Result<()> {
 
 fn summarize(json: &serde_json::Value) -> Option<String> {
     let obj = json.as_object()?;
+
+    // Handle Errors
     if let Some(err) = obj.get("error").and_then(|v| v.as_str()) {
-        let msg = obj.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let msg = obj
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         let hint = if err == "unauthorized" {
             format!(
-                "\n  {}",
-                "hint: run `jorik login` or provide --guild-id and --channel-id if permitted"
-                    .blue()
+                "\n{}",
+                "💡 Hint: Run `jorik login` or check your token.".yellow()
             )
         } else {
             String::new()
         };
-        let header = "error".red().bold();
-        return Some(format!("{header}:\n  code: {err}\n  message: {msg}{hint}"));
+        return Some(format!("{} {}{}", "✘".red(), msg, hint));
     }
-    let status = obj.get("status").and_then(|v| v.as_str()).unwrap_or("");
+
     let action = obj.get("action").and_then(|v| v.as_str()).unwrap_or("");
+
     match action {
         "play" => {
-            let header = "play".cyan().bold();
-            let started = obj
-                .get("started")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let position = obj.get("position").and_then(|v| v.as_u64()).unwrap_or(0);
-            let dropped = obj
-                .get("dropped")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
             let tracks = obj.get("tracks").and_then(|v| v.as_array());
-            let tracks_len = tracks.map(|t| t.len()).unwrap_or(0);
-            let first = tracks.and_then(|t| t.get(0)).and_then(|v| v.as_object());
+            let count = tracks.map(|t| t.len()).unwrap_or(0);
+            let first = tracks.and_then(|t| t.first()).and_then(|v| v.as_object());
             let title = first
                 .and_then(|o| o.get("title"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let url = first
-                .and_then(|o| o.get("url"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            Some(format!(
-                "{header}:\n  status: {status}\n  started: {started}\n  dropped: {dropped}\n  position: {position}\n  tracks: {tracks_len}\n  first: \"{title}\"\n  url: {url}"
-            ))
+                .unwrap_or("Unknown Track");
+
+            if count > 1 {
+                Some(format!(
+                    "{} Added {} tracks to queue (starting with {})",
+                    "🎶".cyan(),
+                    count,
+                    title.bold()
+                ))
+            } else {
+                Some(format!("{} Added {} to queue", "🎶".cyan(), title.bold()))
+            }
         }
         "skip" => {
-            let header = "skip".magenta().bold();
             if let Some(skipped) = obj.get("skipped").and_then(|v| v.as_object()) {
-                let title = skipped.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                let url = skipped.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                Some(format!(
-                    "{header}:\n  status: {status}\n  skipped: \"{title}\"\n  url: {url}"
-                ))
-            } else if let Some(msg) = obj.get("message").and_then(|v| v.as_str()) {
-                Some(format!("{header}:\n  status: {status}\n  message: {msg}"))
+                let title = skipped
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown Track");
+                Some(format!("{} Skipped {}", "⏭️".magenta(), title.bold()))
             } else {
-                Some(format!("{header}:\n  status: {status}"))
+                Some(format!("{} Nothing to skip", "ℹ️".blue()))
             }
         }
-        "stop" => {
-            let header = "stop".yellow().bold();
-            let stopped = obj
-                .get("stopped")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+        "stop" => Some(format!("{} Playback stopped and queue cleared", "⏹️".red())),
+        "pause" => {
+            let state = obj.get("state").and_then(|v| v.as_str()).unwrap_or("");
+            match state {
+                "paused" => Some(format!("{} Playback paused", "⏸️".yellow())),
+                "resumed" => Some(format!("{} Playback resumed", "▶️".green())),
+                _ => Some(format!("{} Toggled pause", "⏯️".yellow())),
+            }
+        }
+        "queue" => {
+            let current = obj.get("current").and_then(|v| v.as_object());
+            let upcoming = obj.get("upcoming").and_then(|v| v.as_array());
+            let total = obj
+                .get("total_upcoming")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let mut output = String::new();
+            output.push_str(&format!("{}\n", "Current Queue".bold().underline()));
+
+            if let Some(curr) = current {
+                let title = curr
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown");
+                output.push_str(&format!("{} {}\n", "▶️".green(), title.bold()));
+            } else {
+                output.push_str("Nothing playing currently.\n");
+            }
+
+            if let Some(list) = upcoming {
+                if !list.is_empty() {
+                    output.push_str("\nUp Next:\n");
+                    for (i, item) in list.iter().enumerate() {
+                        let title = item
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown");
+                        output.push_str(&format!("{}. {}\n", i + 1, title));
+                    }
+                    if total > list.len() as u64 {
+                        output.push_str(&format!("... and {} more\n", total - list.len() as u64));
+                    }
+                } else {
+                    output.push_str("\nQueue is empty.\n");
+                }
+            }
+            Some(output)
+        }
+        "clear" => {
+            let removed = obj.get("removed").and_then(|v| v.as_u64()).unwrap_or(0);
             Some(format!(
-                "{header}:\n  status: {status}\n  stopped: {stopped}"
+                "{} Cleared {} tracks from queue",
+                "🗑️".red(),
+                removed
             ))
         }
-        _ => {
-            if !action.is_empty() || !status.is_empty() {
-                let header = "status".white().bold();
-                Some(format!("{header}:\n  status: {status}\n  action: {action}"))
+        "nowplaying" => {
+            if let Some(np) = obj.get("now_playing").and_then(|v| v.as_object()) {
+                let track = np.get("track").and_then(|v| v.as_object());
+                let title = track
+                    .and_then(|t| t.get("title"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown");
+                let elapsed = np.get("elapsedMs").and_then(|v| v.as_u64()).unwrap_or(0);
+                let duration = np.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                let progress = if duration > 0 {
+                    let pct = (elapsed as f64 / duration as f64 * 20.0).round() as usize;
+                    let bar = "━".repeat(pct) + "⚪" + &"━".repeat(20usize.saturating_sub(pct));
+                    format!("[{}]", bar)
+                } else {
+                    "".to_string()
+                };
+
+                let time_str = format!(
+                    "{}:{:02} / {}:{:02}",
+                    elapsed / 60000,
+                    (elapsed % 60000) / 1000,
+                    duration / 60000,
+                    (duration % 60000) / 1000
+                );
+
+                Some(format!(
+                    "{} {}\n{} {}",
+                    "▶️".green(),
+                    title.bold(),
+                    progress,
+                    time_str
+                ))
             } else {
-                None
+                Some(format!("{} Nothing is playing right now", "zzz".blue()))
             }
         }
-    }
-}
-
-fn color_status(status: reqwest::StatusCode) -> colored::ColoredString {
-    let code = status.as_u16();
-    let text = status.to_string();
-    if (200..300).contains(&code) {
-        text.green().bold()
-    } else if (400..500).contains(&code) {
-        text.yellow().bold()
-    } else if code >= 500 {
-        text.red().bold()
-    } else {
-        text.normal()
+        "loop" => {
+            let mode = obj.get("mode").and_then(|v| v.as_str()).unwrap_or("off");
+            Some(format!("{} Loop mode set to: {}", "🔁".cyan(), mode.bold()))
+        }
+        "247" => {
+            let enabled = obj
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if enabled {
+                Some(format!("{} 24/7 mode enabled", "🌙".yellow()))
+            } else {
+                Some(format!("{} 24/7 mode disabled", "☀️".yellow()))
+            }
+        }
+        "shuffle" => Some(format!("{} Queue shuffled", "🔀".magenta())),
+        _ => None,
     }
 }
 
@@ -322,7 +559,8 @@ fn load_token() -> Option<String> {
 
 async fn login(base_url: &str) -> Result<()> {
     let auth_url = build_url(base_url, "/authorize");
-    println!("Opening browser for authorization: {auth_url}");
+    println!("{} Opening browser for authorization...", "🔑".yellow());
+    println!("Link: {}", auth_url.underline());
     let _ = that(&auth_url);
 
     print!("Paste bearer token from the page: ");
@@ -335,7 +573,7 @@ async fn login(base_url: &str) -> Result<()> {
     }
     save_token(token)?;
     if let Some(path) = config_file_path() {
-        println!("Token saved to {}", path.display());
+        println!("{} Token saved to {}", "✔".green(), path.display());
     }
     Ok(())
 }
