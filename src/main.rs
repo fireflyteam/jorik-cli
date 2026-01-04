@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use dirs::config_dir;
 use open::that;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::Serialize;
 use std::fs;
 use std::io::{self, Write};
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
                 action: "play",
                 guild_id,
                 channel_id,
-                query: query.join(" "),
+                query: clean_query(&query.join(" ")),
                 user_id,
                 requested_by,
                 avatar_url,
@@ -581,4 +581,30 @@ async fn login(base_url: &str) -> Result<()> {
 
 fn build_url(base: &str, path: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), path)
+}
+
+fn clean_query(input: &str) -> String {
+    if let Ok(mut url) = Url::parse(input) {
+        if url.cannot_be_a_base() || url.query().is_none() {
+            return input.to_string();
+        }
+
+        let pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .filter(|(k, _)| k != "si")
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+
+        if pairs.is_empty() {
+            url.set_query(None);
+        } else {
+            let mut serializer = url.query_pairs_mut();
+            serializer.clear();
+            for (k, v) in pairs {
+                serializer.append_pair(&k, &v);
+            }
+        }
+        return url.to_string();
+    }
+    input.to_string()
 }
