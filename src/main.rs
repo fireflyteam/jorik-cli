@@ -397,7 +397,7 @@ fn summarize(json: &serde_json::Value) -> Option<String> {
                 .and_then(|o| o.get("title"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown Track");
-            let artist = first.and_then(|o| o.get("artist")).and_then(|v| v.as_str());
+            let artist = first.and_then(|o| o.get("author")).and_then(|v| v.as_str());
 
             let display_title = if let Some(a) = artist {
                 format!("{} by {}", title, a)
@@ -426,7 +426,7 @@ fn summarize(json: &serde_json::Value) -> Option<String> {
                     .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Unknown Track");
-                let artist = skipped.get("artist").and_then(|v| v.as_str());
+                let artist = skipped.get("author").and_then(|v| v.as_str());
                 let display_title = if let Some(a) = artist {
                     format!("{} by {}", title, a)
                 } else {
@@ -466,7 +466,7 @@ fn summarize(json: &serde_json::Value) -> Option<String> {
                     .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Unknown");
-                let artist = curr.get("artist").and_then(|v| v.as_str());
+                let artist = curr.get("author").and_then(|v| v.as_str());
                 let display_title = if let Some(a) = artist {
                     format!("{} by {}", title, a)
                 } else {
@@ -485,7 +485,7 @@ fn summarize(json: &serde_json::Value) -> Option<String> {
                             .get("title")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown");
-                        let artist = item.get("artist").and_then(|v| v.as_str());
+                        let artist = item.get("author").and_then(|v| v.as_str());
                         let display_title = if let Some(a) = artist {
                             format!("{} by {}", title, a)
                         } else {
@@ -517,7 +517,7 @@ fn summarize(json: &serde_json::Value) -> Option<String> {
                     .and_then(|t| t.get("title"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("Unknown");
-                let artist = track.and_then(|t| t.get("artist")).and_then(|v| v.as_str());
+                let artist = track.and_then(|t| t.get("author")).and_then(|v| v.as_str());
 
                 let display_title = if let Some(a) = artist {
                     format!("{} by {}", title, a)
