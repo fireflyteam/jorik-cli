@@ -140,6 +140,13 @@ enum Commands {
     },
     /// Login to get a token
     Login,
+    /// Get lyrics for current track
+    Lyrics {
+        #[arg(long)]
+        guild_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
 }
 
 #[derive(Deserialize, Clone)]
@@ -205,7 +212,14 @@ struct FilterPayload {
     filters: AudioFilters,
 }
 
-#[derive(Serialize, Default, Clone)]
+#[derive(Serialize)]
+struct LyricsPayload {
+    action: String,
+    guild_id: Option<String>,
+    user_id: Option<String>,
+}
+
+#[derive(Serialize, Default)]
 struct AudioFilters {
     #[serde(skip_serializing_if = "Option::is_none")]
     volume: Option<f32>,
@@ -476,6 +490,14 @@ async fn main() -> Result<()> {
         }
         Commands::Login => {
             login(&cli.base_url).await?;
+        }
+        Commands::Lyrics { guild_id, user_id } => {
+            let payload = LyricsPayload {
+                action: "lyrics".to_string(),
+                guild_id,
+                user_id,
+            };
+            post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
         }
         Commands::Filter {
             style,
@@ -915,6 +937,41 @@ fn summarize(json: &serde_json::Value) -> Option<String> {
             }
         }
         "shuffle" => Some(format!("{} Queue shuffled", "🔀".magenta())),
+        "filter" => {
+            let msg = obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Filters updated");
+            Some(format!("{} {}", "🎚️".cyan(), msg))
+        }
+        "lyrics" => {
+            if let Some(data) = obj.get("data").and_then(|v| v.as_object()) {
+                let mut output = String::new();
+                output.push_str(&format!("{}\n\n", "🎤 Lyrics".magenta().bold()));
+
+                if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                    output.push_str(text);
+                } else if let Some(lines) = data.get("lines").and_then(|v| v.as_array()) {
+                    for line in lines {
+                        let timestamp = line.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let text = line.get("line").and_then(|v| v.as_str()).unwrap_or("");
+                        let ts_str = format!(
+                            "[{:02}:{:02}]",
+                            timestamp / 60000,
+                            (timestamp % 60000) / 1000
+                        );
+                        output.push_str(&format!("{} {}\n", ts_str.dimmed(), text));
+                    }
+                }
+
+                if let Some(source) = data.get("sourceName").and_then(|v| v.as_str()) {
+                    output.push_str(&format!("\n\nSource: {}", source.dimmed()));
+                }
+                Some(output)
+            } else {
+                Some(format!("{} No lyrics data found", "ℹ️".blue()))
+            }
+        }
         _ => None,
     }
 }
