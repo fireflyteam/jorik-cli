@@ -280,12 +280,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    
+    // Load settings from settings.json
+    let settings = api::load_settings();
+    
+    // If base_url is the default one, but settings.json has a different one, use the one from settings.json
+    if cli.base_url == "https://jorik.xserv.pp.ua" && settings.base_url != "https://jorik.xserv.pp.ua" {
+        cli.base_url = settings.base_url.clone();
+    }
     
     // Check if we are running TUI first, to avoid printing update checks to stdout
     if let Commands::Tui { guild_id, user_id } = cli.command {
         return tui::run(
-            cli.base_url,
+            settings,
             cli.token.or_else(load_token),
             guild_id,
             user_id
@@ -881,7 +889,7 @@ fn summarize(json: &Value) -> Option<String> {
                 };
 
                 let time_str = format!(
-                    "{}:{:02} / {}:{:02}",
+                    "{:02}:{:02} / {:02}:{:02}",
                     elapsed / 60000,
                     (elapsed % 60000) / 1000,
                     duration / 60000,

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use dirs::config_dir;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
@@ -164,7 +165,7 @@ pub struct LowPassOptions {
     pub smoothing: Option<f32>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Auth {
     pub token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,8 +174,73 @@ pub struct Auth {
     pub username: Option<String>,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct WsEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(rename = "guildId")]
+    pub guild_id: Option<String>,
+    pub data: Option<Value>,
+    pub playback: Option<PlaybackState>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PlaybackState {
+    #[serde(rename = "elapsedMs")]
+    pub elapsed_ms: u64,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
+    pub paused: bool,
+    pub spectrogram: Option<Vec<Vec<u8>>>,
+}
+
+#[derive(Serialize)]
+pub struct WsSubscribe {
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    #[serde(rename = "guildId")]
+    pub guild_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Settings {
+    pub base_url: String,
+    #[serde(default = "default_offset")]
+    pub visualizer_offset: i64,
+}
+
+fn default_offset() -> i64 { 200 }
+
 pub fn config_file_path() -> Option<PathBuf> {
     config_dir().map(|p| p.join("jorik-cli").join("auth.json"))
+}
+
+pub fn settings_file_path() -> Option<PathBuf> {
+    config_dir().map(|p| p.join("jorik-cli").join("settings.json"))
+}
+
+pub fn load_settings() -> Settings {
+    if let Some(path) = settings_file_path() {
+        if let Ok(contents) = fs::read_to_string(&path) {
+            if let Ok(settings) = serde_json::from_str::<Settings>(&contents) {
+                return settings;
+            }
+        }
+    }
+    Settings {
+        base_url: "https://jorik.xserv.pp.ua".to_string(),
+        visualizer_offset: 200,
+    }
+}
+
+pub fn save_settings(settings: &Settings) -> Result<()> {
+    let path = settings_file_path().context("cannot determine settings path")?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("creating config directory")?;
+    }
+    let json = serde_json::to_string_pretty(settings).context("serializing settings")?;
+    fs::write(&path, json).context("writing settings file")?;
+    Ok(())
 }
 
 pub fn save_token(token: &str, avatar_url: Option<&str>, username: Option<&str>) -> Result<()> {

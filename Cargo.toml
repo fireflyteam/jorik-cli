@@ -24,6 +24,10 @@ terminal_size = "0.3"
 ratatui-image = { version = "10.0.2", default-features = false, features = ["image-defaults", "crossterm"] }
 ratatui = "0.30"
 atty = "0.2"
+tokio-tungstenite = "0.28.0"
+futures-util = "0.3.31"
+url = "2.5.8"
+chrono = "0.4.43"
 
 [build-dependencies]
 winres = "0.1"
