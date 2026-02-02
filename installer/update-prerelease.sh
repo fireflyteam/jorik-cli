@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Configuration (override via env or args)
+# Update to latest prerelease or release
 HOST="${HOST:-https://api.github.com}"
 OWNER="${OWNER:-FENTTEAM}"
 REPO="${REPO:-jorik-cli}"
 TARGET="${TARGET:-x86_64-unknown-linux-gnu}"
 DEST="${DEST:-/usr/local/bin/jorik}"
 TOKEN="${GITHUB_TOKEN:-}"
-# If you want a specific tag, set TAG=vX.Y.Z (otherwise uses /releases/latest)
-TAG="${TAG:-}"
 
 API="${HOST}/repos/${OWNER}/${REPO}/releases"
 AUTH=()
@@ -17,27 +15,26 @@ if [[ -n "$TOKEN" ]]; then
   AUTH=(-H "Authorization: token ${TOKEN}")
 fi
 
-tmp="$(mktemp -d)"
-cleanup() { rm -rf "$tmp"; }
-trap cleanup EXIT
+echo "Fetching releases..."
+# GitHub returns a list. We want the first one (latest by date, including prereleases)
+releases_json="$(curl -fsSL "${AUTH[@]}" "${API}")"
 
-echo "Fetching release metadata..."
-if [[ -n "$TAG" ]]; then
-  rel_json="$(curl -fsSL "${AUTH[@]}" "${API}/tags/${TAG}")"
-else
-  rel_json="$(curl -fsSL "${AUTH[@]}" "${API}/latest")"
-fi
-
+# Find the first release that has an asset for our target
+# jq logic: iterate over releases, find first where assets contain matching name
 asset_url="$(
   jq -r --arg t "$TARGET" '
-    .assets[]? | select(.name|endswith($t + ".tar.gz")) | .browser_download_url
-  ' <<<"$rel_json"
+    .[] | .assets[]? | select(.name|endswith($t + ".tar.gz")) | .browser_download_url
+  ' <<<"$releases_json" | head -n 1
 )"
 
 if [[ -z "$asset_url" || "$asset_url" == "null" ]]; then
-  echo "Error: No asset found ending with ${TARGET}.tar.gz" >&2
+  echo "Error: No matching asset found in recent releases." >&2
   exit 1
 fi
+
+tmp="$(mktemp -d)"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
 
 echo "Downloading: $asset_url"
 curl -fsSL "${AUTH[@]}" -o "$tmp/jorik.tar.gz" "$asset_url"
@@ -58,5 +55,5 @@ else
   "${install_cmd[@]}"
 fi
 
-echo "Done. Version:"
-"$DEST" --help >/dev/null 2>&1 && "$DEST" --version || true
+echo "Done. Updated to:"
+"$DEST" --version

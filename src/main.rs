@@ -209,7 +209,7 @@ struct GiteaRelease {
 }
 
 async fn check_for_updates(client: &Client) -> Option<(String, Vec<GiteaAsset>)> {
-    let url = "https://git.xserv.pp.ua/api/v1/repos/xxanqw/jorik-cli/releases";
+    let url = "https://api.github.com/repos/FENTTEAM/jorik-cli/releases";
     let res = client
         .get(url)
         .header("User-Agent", "jorik-cli")
@@ -229,14 +229,15 @@ async fn check_for_updates(client: &Client) -> Option<(String, Vec<GiteaAsset>)>
     let mut update_found = false;
     let mut latest_release_info = None;
 
+    // Filter to find the absolute latest version (including prereleases if they are newer)
     for release in releases {
         let clean_name = release.tag_name.trim_start_matches('v');
-        if let Ok(version) = Version::parse(clean_name)
-            && version > latest_version
-        {
-            latest_version = version;
-            latest_release_info = Some((release.tag_name, release.assets));
-            update_found = true;
+        if let Ok(version) = Version::parse(clean_name) {
+            if version > latest_version {
+                latest_version = version;
+                latest_release_info = Some((release.tag_name, release.assets));
+                update_found = true;
+            }
         }
     }
 
