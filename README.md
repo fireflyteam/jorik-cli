@@ -1,7 +1,8 @@
 <div align="center">
 
-<img height="256" alt="jorik" src="https://cdn.xserv.pp.ua/files/gitea-uploads/1ffaf4-logo.png"></img>
+<img height="256" alt="jorik" src="https://github.com/fireflyteam/jorik-cli/blob/main/installer/assets/logo.png?raw=true"></img>
+
+under development  
+powerful "remote" for Jorik Systems based Snail bot (also WIP)
 
 </div>
-
-under development
