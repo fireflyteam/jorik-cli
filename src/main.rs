@@ -1,14 +1,12 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use colored::Colorize;
 use dirs::config_dir;
 use open::that;
 use reqwest::{Client, Url};
-use semver::Version;
 use serde_json::Value;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Write};
-use std::process::Command;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -18,6 +16,9 @@ mod api;
 mod ascii;
 mod image;
 mod tui;
+mod updater;
+
+pub use updater::ReleaseAsset as GiteaAsset;
 
 use api::*;
 
@@ -30,7 +31,7 @@ struct Cli {
         long,
         global = true,
         env = "JORIK_BASE_URL",
-        default_value = "https://jorik.xserv.pp.ua"
+        default_value = api::DEFAULT_BASE_URL
     )]
     base_url: String,
 
@@ -196,56 +197,15 @@ enum AuthSubcommand {
     Info,
 }
 
-#[derive(serde::Deserialize, Clone)]
-pub struct GiteaAsset {
-    pub name: String,
-    pub browser_download_url: String,
-}
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod config_tests;
 
-#[derive(serde::Deserialize)]
-pub struct GiteaRelease {
-    pub tag_name: String,
-    pub assets: Vec<GiteaAsset>,
-}
-
-pub async fn check_for_updates(client: &Client) -> Option<(String, Vec<GiteaAsset>)> {
-    let url = "https://api.github.com/repos/fireflyteam/jorik-cli/releases";
-    let res = client
-        .get(url)
-        .header("User-Agent", "jorik-cli")
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-        .ok()?;
-
-    if !res.status().is_success() {
-        return None;
-    }
-
-    let releases: Vec<GiteaRelease> = res.json().await.ok()?;
-    let current = Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
-
-    let mut latest_version = current.clone();
-    let mut update_found = false;
-    let mut latest_release_info = None;
-
-    // Filter to find the absolute latest version
-    for release in releases {
-        let clean_name = release.tag_name.trim_start_matches('v');
-        if let Ok(version) = Version::parse(clean_name) {
-            // Version comparison: 0.4.0 > 0.4.0-g is true in semver
-            if version > latest_version {
-                latest_version = version;
-                latest_release_info = Some((release.tag_name, release.assets));
-                update_found = true;
-            }
-        }
-    }
-
-    if update_found {
-        latest_release_info
+fn resolve_base_url(saved: &str, requested: &str, source: Option<ValueSource>) -> String {
+    if source == Some(ValueSource::DefaultValue) {
+        saved.to_string()
     } else {
-        None
+        requested.to_string()
     }
 }
 
@@ -280,14 +240,18 @@ async fn main() -> Result<()> {
         }
     }
 
-    let mut cli = Cli::parse();
-    
-    let settings = api::load_settings();
-    
-    if cli.base_url == "https://jorik.xserv.pp.ua" && settings.base_url != "https://jorik.xserv.pp.ua" {
-        cli.base_url = settings.base_url.clone();
-    }
-    
+    let matches = Cli::command().get_matches();
+    let mut cli = Cli::from_arg_matches(&matches)?;
+    let mut settings = api::load_settings();
+    cli.base_url = resolve_base_url(
+        &settings.base_url,
+        &cli.base_url,
+        matches.value_source("base_url"),
+    );
+    // Pass the same resolved configuration to both interfaces.
+    settings.base_url = cli.base_url.clone();
+    api::validate_base_url(&settings.base_url)?;
+
     let client = Client::builder()
         .user_agent("jorik-cli")
         .timeout(Duration::from_secs(10))
@@ -295,19 +259,15 @@ async fn main() -> Result<()> {
         .context("building HTTP client")?;
 
     if let Commands::Tui { guild_id, user_id } = cli.command {
-        if let Some((latest, assets)) = tui::run(
-            settings,
-            cli.token.or_else(load_token),
-            guild_id,
-            user_id
-        ).await? {
-             return trigger_update(&client, &latest, &assets).await;
+        if let Some((latest, _assets)) =
+            tui::run(settings, cli.token.or_else(load_token), guild_id, user_id).await?
+        {
+            return updater::install(&latest).await;
         }
         return Ok(());
     }
 
-    let update_client = client.clone();
-    let update_check = tokio::spawn(async move { check_for_updates(&update_client).await });
+    let update_check = tokio::spawn(updater::check_for_updates());
 
     let token = cli.token.clone().or_else(load_token);
 
@@ -566,7 +526,7 @@ async fn main() -> Result<()> {
         Commands::Tui { .. } => unreachable!(), // Handled early
     }
 
-    if let Ok(Some((latest, assets))) = update_check.await {
+    if let Ok(Some((latest, _assets))) = update_check.await {
         println!(
             "\n{} {} -> {}",
             "A new version of jorik-cli is available:".yellow().bold(),
@@ -581,74 +541,10 @@ async fn main() -> Result<()> {
         io::stdin().read_line(&mut input)?;
 
         if input.trim().eq_ignore_ascii_case("y") {
-            trigger_update(&client, &latest, &assets).await?;
+            updater::install(&latest).await?;
         }
     }
 
-    Ok(())
-}
-
-async fn trigger_update(client: &Client, _latest: &str, assets: &[GiteaAsset]) -> Result<()> {
-    if cfg!(target_os = "linux") {
-        println!("Running update script...");
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg("curl -sL https://shorty.pp.ua/jorikcli | bash")
-            .status()
-            .context("Failed to execute update script")?;
-
-        if status.success() {
-            println!(
-                "\n{}",
-                "Update successful! You can now use the latest version."
-                    .green()
-                    .bold()
-            );
-        } else {
-            println!("\n{}", "Update failed.".red().bold());
-        }
-    } else if cfg!(target_os = "windows") {
-        if let Some(asset) = assets.iter().find(|a| a.name.ends_with("setup.exe")) {
-            println!("Downloading installer...");
-            let temp_dir = std::env::temp_dir();
-            let installer_path = temp_dir.join(&asset.name);
-
-            {
-                let mut file = File::create(&installer_path)?;
-                let mut response = client.get(&asset.browser_download_url).send().await?;
-
-                if !response.status().is_success() {
-                    bail!("Failed to download installer: {}", response.status());
-                }
-
-                while let Some(chunk) = response.chunk().await? {
-                    file.write_all(&chunk)?;
-                }
-            }
-
-            println!("Running installer...");
-            Command::new(&installer_path)
-                .arg("/SILENT")
-                .spawn()
-                .context("Failed to start installer")?;
-
-            println!(
-                "\n{}",
-                "Update started! The application will now exit to complete the installation."
-                    .green()
-                    .bold()
-            );
-            std::process::exit(0);
-        } else {
-            println!("{}", "No Windows installer found for this release.".red());
-            println!(
-                "Download it manually at: https://github.com/fireflyteam/jorik-cli/releases"
-            );
-        }
-    } else {
-        println!("Automatic updates are not supported on this platform.");
-        println!("Download it at: https://github.com/fireflyteam/jorik-cli/releases");
-    }
     Ok(())
 }
 
@@ -887,8 +783,11 @@ fn summarize(json: &Value) -> Option<String> {
                 let progress = if duration > 0 {
                     let pct = (elapsed as f64 / duration as f64 * 20.0).round() as usize;
                     let bar = "━".repeat(pct) + "⚪" + &"━".repeat(20usize.saturating_sub(pct));
-                    format!("[{}]
-", bar)
+                    format!(
+                        "[{}]
+",
+                        bar
+                    )
                 } else {
                     "\n".to_string()
                 };
@@ -981,8 +880,7 @@ async fn login(base_url: &str) -> Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
         .context("binding local listener; the legacy manual token-paste flow is deprecated. Please run `jorik auth login` on a device where your browser can redirect to http://127.0.0.1 so the CLI can automatically capture token, avatar and username")?;
-    let local_addr = listener
-        .local_addr()?;
+    let local_addr = listener.local_addr()?;
     let callback_url = format!("http://{}/oauth-callback", local_addr);
     println!(
         "{} Local callback URL: {}",
@@ -1007,9 +905,7 @@ async fn login(base_url: &str) -> Result<()> {
         Ok(Ok((mut stream, _addr))) => {
             // Read the request (headers should fit into this buffer for our simple case).
             let mut buf = vec![0u8; 8192];
-            let n = stream
-                .read(&mut buf)
-                .await?;
+            let n = stream.read(&mut buf).await?;
             let req = String::from_utf8_lossy(&buf[..n]);
             let first_line = req.lines().next().unwrap_or("");
             let path = first_line.split_whitespace().nth(1).unwrap_or("");
@@ -1039,9 +935,9 @@ async fn login(base_url: &str) -> Result<()> {
                     // Build a small, readable success page and kick off confetti animation.
                     let escaped_username = username_val
                         .as_deref()
-                        .map(|s| escape_html(s))
+                        .map(escape_html)
                         .unwrap_or_else(|| "User".to_string());
-                    let escaped_avatar = avatar_val.as_deref().map(|s| escape_html(s));
+                    let escaped_avatar = avatar_val.as_deref().map(escape_html);
                     let saved_path_html = if let Some(path) = config_file_path() {
                         format!(
                             "<p>Saved to <code>{}</code></p>",
@@ -1075,7 +971,9 @@ async fn login(base_url: &str) -> Result<()> {
                             avatar
                         ));
                     } else {
-                        body.push_str(r##"<div class=\"badge\"><div class=\"check\">✓</div></div>"##);
+                        body.push_str(
+                            r##"<div class=\"badge\"><div class=\"check\">✓</div></div>"##,
+                        );
                     }
                     body.push_str(&format!(
                         r##"<div><div class=\"user\">{}</div><div class=\"sp\">Authorization complete</div>{}"##,
@@ -1132,7 +1030,7 @@ async fn login(base_url: &str) -> Result<()> {
                     if let Some(path) = config_file_path() {
                         println!("{} Token saved to {}", "✔".green(), path.display());
                     }
-                    return Ok(())
+                    return Ok(());
                 }
             }
 
@@ -1172,12 +1070,7 @@ fn auth_info() -> Result<()> {
             println!("{} Avatar: (none)", "🖼️".cyan());
         }
 
-        let token = auth.token;
-        let masked = if token.len() > 8 {
-            format!("{}...{}", &token[0..4], &token[token.len() - 4..])
-        } else {
-            token
-        };
+        let masked = "[redacted]";
         println!("{} Token: {}", "🔑".cyan(), masked);
         Ok(())
     } else {

@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
 pub use crate::GiteaAsset;
+use anyhow::{Context, Result};
 use dirs::config_dir;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -185,6 +185,8 @@ pub struct WsEvent {
     pub playback: Option<PlaybackState>,
     pub success: Option<bool>,
     pub id: Option<String>,
+    pub message: Option<String>,
+    pub error: Option<Value>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -214,6 +216,8 @@ pub struct WsAction<T> {
     pub payload: T,
 }
 
+pub const DEFAULT_BASE_URL: &str = "https://jorik.gleckson.com";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Settings {
     pub base_url: String,
@@ -227,10 +231,18 @@ pub struct Settings {
     pub layout: String,
 }
 
-fn default_offset() -> i64 { 0 }
-fn default_theme() -> String { "Default".to_string() }
-fn default_viz() -> String { "Bars".to_string() }
-fn default_layout() -> String { "Standard".to_string() }
+fn default_offset() -> i64 {
+    0
+}
+fn default_theme() -> String {
+    "Default".to_string()
+}
+fn default_viz() -> String {
+    "Bars".to_string()
+}
+fn default_layout() -> String {
+    "Standard".to_string()
+}
 
 pub fn config_file_path() -> Option<PathBuf> {
     config_dir().map(|p| p.join("jorik-cli").join("auth.json"))
@@ -241,20 +253,28 @@ pub fn settings_file_path() -> Option<PathBuf> {
 }
 
 pub fn load_settings() -> Settings {
-    if let Some(path) = settings_file_path() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            if let Ok(settings) = serde_json::from_str::<Settings>(&contents) {
-                return settings;
-            }
-        }
+    if let Some(path) = settings_file_path()
+        && let Ok(contents) = fs::read_to_string(&path)
+        && let Ok(settings) = serde_json::from_str::<Settings>(&contents)
+    {
+        return migrate_saved_settings(settings);
     }
     Settings {
-        base_url: "https://jorik.xserv.pp.ua".to_string(),
+        base_url: DEFAULT_BASE_URL.to_string(),
         visualizer_offset: 0,
         theme: "Default".to_string(),
         visualizer_style: "Bars".to_string(),
         layout: "Standard".to_string(),
     }
+}
+
+fn migrate_saved_settings(mut settings: Settings) -> Settings {
+    // Only migrate the retired default. Explicit CLI/environment overrides and
+    // custom saved hosts are left untouched; no config file is rewritten here.
+    if settings.base_url.trim_end_matches('/') == "https://jorik.xserv.pp.ua" {
+        settings.base_url = DEFAULT_BASE_URL.to_string();
+    }
+    settings
 }
 
 pub fn save_settings(settings: &Settings) -> Result<()> {
@@ -280,17 +300,39 @@ pub fn save_token(token: &str, avatar_url: Option<&str>, username: Option<&str>)
     };
 
     let json = serde_json::to_string_pretty(&auth).context("serializing auth")?;
-    fs::write(&path, json).context("writing auth file")?;
+    write_auth_file(&path, &json)?;
+    Ok(())
+}
+
+fn write_auth_file(path: &std::path::Path, json: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).context("opening auth file")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .context("restricting auth file permissions")?;
+    }
+    file.set_len(0).context("truncating auth file")?;
+    file.write_all(json.as_bytes())
+        .context("writing auth file")?;
     Ok(())
 }
 
 pub fn load_auth() -> Option<Auth> {
-    if let Some(path) = config_file_path() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            if let Ok(auth) = serde_json::from_str::<Auth>(&contents) {
-                return Some(auth);
-            }
-        }
+    if let Some(path) = config_file_path()
+        && let Ok(contents) = fs::read_to_string(&path)
+        && let Ok(auth) = serde_json::from_str::<Auth>(&contents)
+    {
+        return Some(auth);
     }
     None
 }
@@ -299,9 +341,29 @@ pub fn load_token() -> Option<String> {
     load_auth().map(|a| a.token)
 }
 
+pub fn validate_base_url(base: &str) -> Result<()> {
+    let url = Url::parse(base).context("invalid server URL")?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
+        "server URL must use http or https and include a host"
+    );
+    anyhow::ensure!(
+        url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "server URL must not contain credentials, a query, or a fragment"
+    );
+    Ok(())
+}
+
 pub fn build_url(base: &str, path: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), path)
 }
+
+#[cfg(test)]
+#[path = "api_tests.rs"]
+mod tests;
 
 pub fn clean_query(input: &str) -> String {
     if let Ok(mut url) = Url::parse(input) {
