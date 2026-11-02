@@ -1,0 +1,20 @@
+
+
+
+  ╭ Welcome to Jorik ────────────────────────────────────────────────────────╮
+  │ YOUR MUSIC. YOUR TERMINAL.                                               │
+  │ A quieter place to control the whole room.                               │
+  │                                                                          │
+  │ CONNECTING TO                                                            │
+  │ https://example.com                                                      │
+  │ 01  Sign in with Discord                                                 │
+  │     A secure browser login, scoped to this server.                       │
+  │                                                                          │
+  │ 02  Join your voice channel                                              │
+  │                                                                          │
+  │ 03  Search for a song, or paste a URL                                    │
+  │                                                                          │
+  │                                                                          │
+  │  Enter  sign in   \  change server   q  quit                             │
+  │ No plaintext credential fallback. No playback requests before sign-in.   │
+  ╰──────────────────────────────────────────────────────────────────────────╯

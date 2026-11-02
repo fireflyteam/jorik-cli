@@ -45,11 +45,10 @@ fn compact_player_snapshot() {
         "A Real Hero - College".to_string(),
     ];
     let actual = screen(&mut app, 80, 24);
-    let expected = include_str!("snapshots/player-80x24.txt").replace("\r\n", "\n");
-    assert_eq!(actual, expected.trim_end());
+    super::polish_tests::assert_snapshot("player-80x24", &actual);
     assert!(actual.contains("Midnight City"));
     assert!(actual.contains("Queue · 3 tracks"));
-    assert!(actual.contains("Space pause"));
+    assert!(actual.contains("Space") && actual.contains("pause"));
     assert!(!actual.contains("Visualizer"));
 }
 

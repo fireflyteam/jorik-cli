@@ -1,0 +1,24 @@
+  JORIK     1 Player  2 Lyrics  3 Settings  4 Logs                      ● Live
+  example.com  /  Guild guild
+ ──────────────────────────────────────────────────────────────────────────────
+ ╭ Settings ──────────────────────────────────────────────────────────────────╮
+ │ Make this space yours.                                                     │
+ │                                                                            │
+ │ ▎ Server              https://example.com                                  │
+ │                       HTTPS required outside loopback development.         │
+ │   Spectrum offset     0 ms                                                 │
+ │                       Synchronize the visualizer with what you hear.       │
+ │   Color theme         ‹ Default ›                                          │
+ │                       Preview colors with ← →. Saved immediately.          │
+ │   Visualizer          ‹ Bars ›                                             │
+ │                       Choose the spectrum's visual style.                  │
+ │   Layout              ‹ Standard ›                                         │
+ │                       Extra panels adapt to available terminal space.      │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │ Enter edits text fields. Appearance changes save immediately.              │
+ │                                                                            │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+  · Preferences · appearance saves immediately · server changes stay isolated
+  ↑↓  select   ←→  change   Enter  edit/done   Esc  back

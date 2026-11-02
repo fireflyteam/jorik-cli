@@ -2,6 +2,16 @@
 
 ## 0.5.0-dev.1 (unreleased)
 
+### Visual design and keyboard UX
+- Introduce a shared visual language: layered dark surfaces, rounded panels, focus rings, status badges, and key hints without requiring icon fonts.
+- Refresh the player with a slim progress timeline, readable title/artist queue columns, loaded-range indicators, and clear empty/loading/cached states.
+- Redesign sign-in, settings, command palette, account, update, help, and diagnostics screens; dim dialog backdrops and preserve the originating screen.
+- Add Unicode-safe cursor editing, paste insertion, Home/End, Delete, Ctrl+u, and reverse Tab navigation in settings.
+- Keep blank track submissions open with inline validation.
+- Add bounded, accurately wrapped lyrics scrolling, refresh, request coalescing, and track-change invalidation.
+- Preserve HTTP playback state when a WebSocket upgrade fails; invalidate it only when an established live connection disconnects.
+- Add deterministic UI previews, five rendering snapshots, compact-screen regression tests, and real 80×24 PTY interaction validation.
+
 ### Credential and login hardening
 - Store authentication data in Windows Credential Manager, macOS Keychain, or Linux Secret Service; never silently fall back to plaintext.
 - Scope credentials to the canonical API server (scheme, host, port, and base path).

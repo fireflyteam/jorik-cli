@@ -10,11 +10,11 @@ use ratatui::style::Stylize;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{
-        Bar, BarChart, BarGroup, Block, BorderType, Borders, Clear, Gauge, List, ListItem,
-        ListState, Paragraph, Wrap,
+        Bar, BarChart, BarGroup, Block, BorderType, Clear, LineGauge, List, ListItem, ListState,
+        Paragraph, Wrap,
     },
 };
 use reqwest::Client;
@@ -43,7 +43,9 @@ use url::Url;
 mod actions;
 mod authentication;
 mod chrome;
+mod design;
 mod player;
+mod views;
 
 use actions::{Action, execute as execute_action, handle_clear_keys, handle_palette_keys};
 use authentication::{show_auth_info, start_login, start_signout, switch_server};
@@ -69,42 +71,42 @@ fn get_theme(name: &str) -> Theme {
             border: Color::Rgb(40, 40, 60),
             primary: Color::Rgb(100, 100, 255),
             highlight: Color::Rgb(150, 150, 255),
-            text_secondary: Color::Rgb(120, 120, 140),
+            text_secondary: Color::Rgb(150, 150, 174),
         },
         "Emerald" => Theme {
             bg: Color::Rgb(5, 15, 5),
             border: Color::Rgb(40, 60, 40),
             primary: Color::Rgb(50, 200, 50),
             highlight: Color::Rgb(100, 255, 100),
-            text_secondary: Color::Rgb(120, 140, 120),
+            text_secondary: Color::Rgb(145, 168, 155),
         },
         "Ruby" => Theme {
             bg: Color::Rgb(15, 5, 5),
             border: Color::Rgb(60, 40, 40),
             primary: Color::Rgb(200, 50, 50),
             highlight: Color::Rgb(255, 100, 100),
-            text_secondary: Color::Rgb(140, 120, 120),
+            text_secondary: Color::Rgb(178, 148, 156),
         },
         "Ocean" => Theme {
             bg: Color::Rgb(5, 10, 20),
             border: Color::Rgb(40, 60, 100),
             primary: Color::Rgb(50, 150, 255),
             highlight: Color::Rgb(100, 200, 255),
-            text_secondary: Color::Rgb(120, 130, 160),
+            text_secondary: Color::Rgb(150, 166, 191),
         },
         "Synthwave" => Theme {
             bg: Color::Rgb(20, 10, 30),
             border: Color::Rgb(100, 40, 100),
             primary: Color::Rgb(255, 50, 255),
             highlight: Color::Rgb(255, 150, 50), // Orange highlight
-            text_secondary: Color::Rgb(160, 120, 180),
+            text_secondary: Color::Rgb(183, 155, 203),
         },
         "Sepia" => Theme {
             bg: Color::Rgb(30, 25, 20),
             border: Color::Rgb(80, 70, 60),
             primary: Color::Rgb(180, 140, 100),
             highlight: Color::Rgb(220, 180, 140),
-            text_secondary: Color::Rgb(140, 130, 120),
+            text_secondary: Color::Rgb(181, 164, 146),
         },
         _ => Theme {
             // Default Jorik Purple
@@ -180,6 +182,7 @@ struct App {
 
     input: String,
     input_cursor: usize,
+    input_error: Option<String>,
     input_mode: InputMode,
     view: View,
 
@@ -195,7 +198,10 @@ struct App {
     auth_menu_items: Vec<&'static str>,
 
     lyrics_text: Option<String>,
+    lyrics_loading: bool,
     lyrics_scroll: u16,
+    lyrics_max_scroll: u16,
+    lyrics_page_size: u16,
 
     auth_info_text: Option<String>,
     login_cancel: Option<CancellationToken>,
@@ -218,6 +224,7 @@ struct App {
     layout: String,
     settings_field: SettingsField,
     is_settings_editing: bool,
+    settings_cursor: usize,
     needs_reconnect: bool,
     visualizer_offset: i64,
 
@@ -277,6 +284,7 @@ impl App {
             is_loading: false,
             input: String::new(),
             input_cursor: 0,
+            input_error: None,
             input_mode: InputMode::Normal,
             view,
             menu_state,
@@ -298,7 +306,10 @@ impl App {
             auth_menu_state,
             auth_menu_items: vec!["Login", "Signout", "Info"],
             lyrics_text: None,
+            lyrics_loading: false,
             lyrics_scroll: 0,
+            lyrics_max_scroll: 0,
+            lyrics_page_size: 10,
             auth_info_text: None,
             login_cancel: None,
             login_generation: 0,
@@ -317,6 +328,7 @@ impl App {
             layout: settings.layout,
             settings_field: SettingsField::Host,
             is_settings_editing: false,
+            settings_cursor: 0,
             needs_reconnect: false,
             visualizer_offset: settings.visualizer_offset,
             update_info: None,
@@ -348,6 +360,9 @@ impl App {
         self.queue.clear();
         self.queue_state.select(None);
         self.current_track = None;
+        self.lyrics_text = None;
+        self.lyrics_loading = false;
+        self.lyrics_scroll = 0;
         self.spectrogram = None;
         self.smoothed_bars.fill(0.0);
         self.elapsed_ms = 0;
@@ -399,7 +414,17 @@ impl App {
     }
 
     fn content_view(&self) -> View {
-        if matches!(self.view, View::Menu | View::Help | View::ConfirmClear) {
+        if matches!(
+            self.view,
+            View::Menu
+                | View::Help
+                | View::ConfirmClear
+                | View::UpdateFound
+                | View::FilterMenu
+                | View::AuthMenu
+                | View::AuthResult
+                | View::AppInfo
+        ) {
             self.overlay_return
         } else {
             self.view
@@ -418,6 +443,7 @@ impl App {
     fn begin_search(&mut self, initial: &str) {
         self.input = initial.to_string();
         self.input_cursor = self.input.len();
+        self.input_error = None;
         self.input_mode = InputMode::Editing;
     }
 
@@ -480,9 +506,12 @@ impl App {
     }
 
     fn disconnect_ws(&mut self) {
+        // An unsuccessful upgrade must not erase state just fetched over HTTP.
+        if self.ws_connected {
+            self.has_playback_state = false;
+        }
         self.ws_connected = false;
         self.ws_connecting = false;
-        self.has_playback_state = false;
         if !self.pending_commands.is_empty() {
             self.pending_commands.clear();
             self.error_message = Some(
@@ -492,7 +521,7 @@ impl App {
     }
 
     fn is_busy(&self) -> bool {
-        self.is_loading || !self.pending_commands.is_empty()
+        self.is_loading || self.lyrics_loading || !self.pending_commands.is_empty()
     }
 
     fn log(&mut self, msg: impl Into<String>) {
@@ -611,6 +640,9 @@ impl App {
         }
         self.clamp_queue_selection();
         if self.current_track != previous_track {
+            self.lyrics_text = None;
+            self.lyrics_scroll = 0;
+            self.lyrics_max_scroll = 0;
             self.has_playback_state = false;
             self.elapsed_ms = 0;
             self.duration_ms = 0;
@@ -798,13 +830,17 @@ async fn async_play_track(app_arc: Arc<Mutex<App>>, query: String) {
 }
 
 async fn async_fetch_lyrics(app_arc: Arc<Mutex<App>>) {
-    let (client, base_url, token, payload) = {
+    let (client, base_url, token, payload, track) = {
         let mut app = app_arc.lock().await;
+        if app.lyrics_loading {
+            return;
+        }
         if app.token.is_none() {
             app.lyrics_text = Some("Log in to this server first.".to_string());
             return;
         }
         app.is_loading = true;
+        app.lyrics_loading = true;
         let payload = LyricsPayload {
             action: "lyrics".to_string(),
             guild_id: app.guild_id.clone(),
@@ -815,6 +851,7 @@ async fn async_fetch_lyrics(app_arc: Arc<Mutex<App>>) {
             app.base_url.clone(),
             app.token.clone(),
             payload,
+            app.current_track.clone(),
         )
     };
 
@@ -834,6 +871,11 @@ async fn async_fetch_lyrics(app_arc: Arc<Mutex<App>>) {
     }
     app.lyrics_scroll = 0;
     app.is_loading = false;
+    app.lyrics_loading = false;
+    if app.current_track != track {
+        app.lyrics_text = Some("The track changed. Press r for the current lyrics.".into());
+        return;
+    }
     let lyrics = match result {
         Ok(json) => {
             let data = &json["data"];
@@ -1295,11 +1337,13 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>
             match key.code {
                 KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => app.view = app.overlay_return,
                 KeyCode::Down | KeyCode::Char('j') => {
-                    app.help_scroll = app.help_scroll.saturating_add(1).min(30)
+                    app.help_scroll = app.help_scroll.saturating_add(1)
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     app.help_scroll = app.help_scroll.saturating_sub(1)
                 }
+                KeyCode::Home => app.help_scroll = 0,
+                KeyCode::End => app.help_scroll = u16::MAX,
                 _ => {}
             }
             return UiOutcome::Continue;
@@ -1377,7 +1421,7 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>
     }
     match app.view {
         View::Main => handle_player_keys(app, key, app_arc),
-        View::Lyrics => handle_lyrics_keys(app, key),
+        View::Lyrics => handle_lyrics_keys(app, key, app_arc),
         View::Settings => handle_settings_keys(app, key, app_arc),
         View::Debug => handle_debug_keys(app, key),
         View::FilterMenu => handle_filter_menu_keys(app, key, app_arc),
@@ -1392,7 +1436,7 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>
                 key.code,
                 KeyCode::Esc | KeyCode::Enter | KeyCode::Backspace | KeyCode::Char('i' | 'ш')
             ) {
-                app.view = View::Main;
+                app.view = app.overlay_return;
             }
         }
         View::LoginRequired => match key.code {
@@ -1416,17 +1460,27 @@ fn handle_paste(app: &mut App, text: &str) {
     if app.input_mode == InputMode::Editing {
         app.input.insert_str(app.input_cursor, &text);
         app.input_cursor += text.len();
+        app.input_error = None;
     } else if app.view == View::Menu {
         app.palette_query.push_str(&text);
         app.menu_state.select(Some(0));
     } else if app.is_settings_editing {
         match app.settings_field {
-            SettingsField::Host => app.settings_input.push_str(&text),
+            SettingsField::Host => {
+                app.settings_cursor = cursor_boundary(&app.settings_input, app.settings_cursor);
+                app.settings_input.insert_str(app.settings_cursor, &text);
+                app.settings_cursor += text.len();
+            }
             SettingsField::Offset => {
                 for c in text.chars() {
-                    if c.is_ascii_digit() || (c == '-' && app.offset_input.is_empty()) {
-                        app.offset_input.push(c);
-                    }
+                    edit_text(
+                        &mut app.offset_input,
+                        &mut app.settings_cursor,
+                        event::KeyEvent::new(KeyCode::Char(c), event::KeyModifiers::NONE),
+                        |c, text, cursor| {
+                            c.is_ascii_digit() || (c == '-' && cursor == 0 && !text.contains('-'))
+                        },
+                    );
                 }
             }
             _ => {}
@@ -1437,8 +1491,13 @@ fn handle_paste(app: &mut App, text: &str) {
 fn handle_editing_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>>) {
     match key.code {
         KeyCode::Enter => {
+            if app.input.trim().is_empty() {
+                app.input_error = Some("Enter a song name or URL before adding.".into());
+                return;
+            }
             let query = std::mem::take(&mut app.input);
             app.input_cursor = 0;
+            app.input_error = None;
             app.input_mode = InputMode::Normal;
             tokio::spawn(async_play_track(app_arc, query));
         }
@@ -1446,48 +1505,64 @@ fn handle_editing_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<A
             app.input_mode = InputMode::Normal;
             app.input.clear();
             app.input_cursor = 0;
+            app.input_error = None;
         }
-        KeyCode::Left => {
-            app.input_cursor = app.input[..app.input_cursor]
-                .char_indices()
-                .next_back()
-                .map_or(0, |(i, _)| i);
-        }
-        KeyCode::Right => {
-            if let Some(c) = app.input[app.input_cursor..].chars().next() {
-                app.input_cursor += c.len_utf8();
+        _ => {
+            let before = app.input.len();
+            edit_text(&mut app.input, &mut app.input_cursor, key, |_, _, _| true);
+            if app.input.len() != before {
+                app.input_error = None;
             }
         }
-        KeyCode::Home => app.input_cursor = 0,
-        KeyCode::End => app.input_cursor = app.input.len(),
-        KeyCode::Backspace if app.input_cursor > 0 => {
-            let start = app.input[..app.input_cursor]
+    }
+}
+
+fn edit_text(
+    text: &mut String,
+    cursor: &mut usize,
+    key: event::KeyEvent,
+    mut accepts: impl FnMut(char, &str, usize) -> bool,
+) {
+    *cursor = cursor_boundary(text, *cursor);
+    match key.code {
+        KeyCode::Left => {
+            *cursor = text[..*cursor]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(i, _)| i)
+        }
+        KeyCode::Right => {
+            if let Some(c) = text[*cursor..].chars().next() {
+                *cursor += c.len_utf8();
+            }
+        }
+        KeyCode::Home => *cursor = 0,
+        KeyCode::End => *cursor = text.len(),
+        KeyCode::Backspace if *cursor > 0 => {
+            let start = text[..*cursor]
                 .char_indices()
                 .next_back()
                 .map_or(0, |(i, _)| i);
-            app.input.drain(start..app.input_cursor);
-            app.input_cursor = start;
+            text.drain(start..*cursor);
+            *cursor = start;
         }
-        KeyCode::Delete if app.input_cursor < app.input.len() => {
-            let end = app.input_cursor
-                + app.input[app.input_cursor..]
-                    .chars()
-                    .next()
-                    .unwrap()
-                    .len_utf8();
-            app.input.drain(app.input_cursor..end);
+        KeyCode::Delete if *cursor < text.len() => {
+            let end = *cursor + text[*cursor..].chars().next().unwrap().len_utf8();
+            text.drain(*cursor..end);
         }
         KeyCode::Char('u') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            app.input.clear();
-            app.input_cursor = 0;
+            text.clear();
+            *cursor = 0;
         }
         KeyCode::Char(c)
-            if !key
-                .modifiers
-                .intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) =>
+            if !c.is_control()
+                && !key
+                    .modifiers
+                    .intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT)
+                && accepts(c, text, *cursor) =>
         {
-            app.input.insert(app.input_cursor, c);
-            app.input_cursor += c.len_utf8();
+            text.insert(*cursor, c);
+            *cursor += c.len_utf8();
         }
         _ => {}
     }
@@ -1577,14 +1652,31 @@ fn handle_player_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<Ap
     execute_action(action, app, app_arc);
 }
 
-fn handle_lyrics_keys(app: &mut App, key: event::KeyEvent) {
+fn handle_lyrics_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>>) {
     match key.code {
         KeyCode::Esc | KeyCode::Backspace => app.view = View::Main,
-        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('о') => {
-            app.lyrics_scroll = app.lyrics_scroll.saturating_add(1);
+        KeyCode::Down | KeyCode::Char('j' | 'о') => {
+            app.lyrics_scroll = app
+                .lyrics_scroll
+                .saturating_add(1)
+                .min(app.lyrics_max_scroll)
         }
-        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('л') => {
-            app.lyrics_scroll = app.lyrics_scroll.saturating_sub(1);
+        KeyCode::Up | KeyCode::Char('k' | 'л') => {
+            app.lyrics_scroll = app.lyrics_scroll.saturating_sub(1)
+        }
+        KeyCode::PageDown => {
+            app.lyrics_scroll = app
+                .lyrics_scroll
+                .saturating_add(app.lyrics_page_size)
+                .min(app.lyrics_max_scroll)
+        }
+        KeyCode::PageUp => {
+            app.lyrics_scroll = app.lyrics_scroll.saturating_sub(app.lyrics_page_size)
+        }
+        KeyCode::Home => app.lyrics_scroll = 0,
+        KeyCode::End => app.lyrics_scroll = app.lyrics_max_scroll,
+        KeyCode::Char('r') if !app.lyrics_loading => {
+            tokio::spawn(async_fetch_lyrics(app_arc));
         }
         _ => {}
     }
@@ -1615,27 +1707,23 @@ fn handle_settings_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<
                 app.is_settings_editing = false;
                 app.error_message = None;
             }
-            KeyCode::Char(c) => match app.settings_field {
-                SettingsField::Host => {
-                    app.settings_input.push(c);
-                }
-                SettingsField::Offset
-                    if c.is_ascii_digit() || (c == '-' && app.offset_input.is_empty()) =>
-                {
-                    app.offset_input.push(c);
-                }
+            _ => match app.settings_field {
+                SettingsField::Host => edit_text(
+                    &mut app.settings_input,
+                    &mut app.settings_cursor,
+                    key,
+                    |_, _, _| true,
+                ),
+                SettingsField::Offset => edit_text(
+                    &mut app.offset_input,
+                    &mut app.settings_cursor,
+                    key,
+                    |c, text, cursor| {
+                        c.is_ascii_digit() || (c == '-' && cursor == 0 && !text.contains('-'))
+                    },
+                ),
                 _ => {}
             },
-            KeyCode::Backspace => match app.settings_field {
-                SettingsField::Host => {
-                    app.settings_input.pop();
-                }
-                SettingsField::Offset => {
-                    app.offset_input.pop();
-                }
-                _ => {}
-            },
-            _ => {}
         }
         return;
     }
@@ -1644,6 +1732,11 @@ fn handle_settings_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<
         KeyCode::Enter => match app.settings_field {
             SettingsField::Host | SettingsField::Offset => {
                 app.is_settings_editing = true;
+                app.settings_cursor = if app.settings_field == SettingsField::Host {
+                    app.settings_input.len()
+                } else {
+                    app.offset_input.len()
+                };
             }
             _ => {
                 if save_app_settings(app) {
@@ -1671,7 +1764,7 @@ fn handle_settings_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<
                 SettingsField::Layout => SettingsField::Host,
             };
         }
-        KeyCode::Up => {
+        KeyCode::Up | KeyCode::BackTab => {
             app.settings_field = match app.settings_field {
                 SettingsField::Host => SettingsField::Layout,
                 SettingsField::Offset => SettingsField::Host,
@@ -1800,9 +1893,9 @@ fn handle_debug_keys(app: &mut App, key: event::KeyEvent) {
 
 fn handle_filter_menu_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>>) {
     match key.code {
-        KeyCode::Esc => app.view = View::Main,
+        KeyCode::Esc => app.view = app.overlay_return,
         KeyCode::Backspace => {
-            app.view = View::Main;
+            app.view = app.overlay_return;
             app.open_overlay(View::Menu);
         }
         KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('о') => {
@@ -1846,7 +1939,7 @@ fn handle_filter_menu_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mut
                     "/webhook/audio".to_string(),
                     payload,
                 ));
-                app.view = View::Main;
+                app.view = app.overlay_return;
             }
         }
         _ => {}
@@ -1855,9 +1948,9 @@ fn handle_filter_menu_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mut
 
 fn handle_auth_menu_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>>) {
     match key.code {
-        KeyCode::Esc | KeyCode::Tab => app.view = View::Main,
+        KeyCode::Esc | KeyCode::Tab => app.view = app.overlay_return,
         KeyCode::Backspace => {
-            app.view = View::Main;
+            app.view = app.overlay_return;
             app.open_overlay(View::Menu);
         }
         KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('о') => {
@@ -1980,539 +2073,63 @@ fn get_filters_for_style(style: &str) -> AudioFilters {
 
 fn ui(f: &mut Frame, app: &mut App) {
     let theme = get_theme(&app.theme);
-
-    // Base background color for the entire UI
-    f.render_widget(Block::default().bg(theme.bg), f.area());
-
-    if app.view == View::UpdateFound {
-        let area = popup_rect(66, 13, f.area());
-        f.render_widget(Clear, area);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(" 🚀 Update Available ")
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(Color::Green));
-
-        let version = app
-            .update_info
-            .as_ref()
-            .map(|(v, _)| v.as_str())
-            .unwrap_or("Unknown");
-
-        let text = vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("A new version "),
-                Span::styled(
-                    version,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" is available!"),
-            ]),
-            Line::from(""),
-            Line::from("Do you want to update now?"),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("Press "),
-                Span::styled(
-                    " y ",
-                    Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to Update and Exit"),
-            ]),
-            Line::from(vec![
-                Span::raw("Press "),
-                Span::styled(
-                    " n ",
-                    Style::default()
-                        .bg(Color::Red)
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to Skip for now"),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Nothing is installed unless you confirm.",
-                Style::default().fg(theme.text_secondary),
-            )),
-        ];
-
-        let p = Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .block(block)
-            .wrap(Wrap { trim: true });
-
-        f.render_widget(p, area);
-        return;
-    }
-
-    if app.view == View::LoginRequired {
-        let area = popup_rect(72, 14, f.area());
-        let status = app
-            .auth_info_text
-            .as_deref()
-            .unwrap_or("Log in with Discord to manage playback in your voice channel.");
-        let text = vec![
-            Line::from(Span::styled(
-                "JORIK",
-                Style::default().fg(theme.highlight).bold(),
-            )),
-            Line::from(format!("Server: {}", app.base_url)),
-            Line::from(""),
-            Line::from(status),
-            Line::from(""),
-            Line::from(if app.is_loading {
-                "Waiting for browser authorization…"
-            } else {
-                "Enter log in · \\ change host · q quit"
-            }),
-        ];
+    f.render_widget(Block::default().bg(theme.bg).fg(theme.text()), f.area());
+    if f.area().width < 24 || f.area().height < 8 {
         f.render_widget(
-            Paragraph::new(text)
-                .block(
-                    Block::bordered()
-                        .title(" Welcome ")
-                        .border_style(Style::default().fg(theme.border)),
-                )
-                .wrap(Wrap { trim: false }),
-            area,
+            Paragraph::new("Enlarge terminal\n24×8 minimum\nCtrl+c to quit")
+                .style(Style::default().fg(theme.text_secondary)),
+            f.area(),
         );
         return;
     }
-
-    let main_layout = Layout::vertical([
-        Constraint::Length(2),
+    if app.view == View::LoginRequired {
+        views::welcome(f, app, &theme);
+        return;
+    }
+    let area = f.area();
+    let margin = u16::from(area.width >= 50);
+    let area = Rect::new(
+        area.x + margin,
+        area.y,
+        area.width.saturating_sub(margin * 2),
+        area.height,
+    );
+    let rows = Layout::vertical([
+        Constraint::Length(3),
         Constraint::Min(0),
         Constraint::Length(2),
     ])
-    .split(f.area());
-    let top_section = main_layout[1];
-    let status_bar_area = main_layout[2];
-    let content_view = app.content_view();
-    render_header(f, app, &theme, content_view, main_layout[0]);
-
-    match content_view {
-        View::Lyrics => {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Plain)
-                .title(format!(
-                    " Lyrics {} ",
-                    if app.is_loading { " ⏳ " } else { "" }
-                ))
-                .title_alignment(Alignment::Center)
-                .border_style(Style::default().fg(theme.primary));
-
-            let text = app.lyrics_text.as_deref().unwrap_or("Loading...");
-            let p = Paragraph::new(text)
-                .block(block)
-                .wrap(Wrap { trim: false })
-                .scroll((app.lyrics_scroll, 0));
-
-            f.render_widget(p, top_section);
-        }
-        View::Settings => {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Plain)
-                .title(" Settings ")
-                .title_alignment(Alignment::Center)
-                .border_style(Style::default().fg(theme.primary));
-
-            let f_field = app.settings_field;
-            let is_ed = app.is_settings_editing;
-
-            let h_s = |f| {
-                if f_field == f {
-                    if is_ed {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD)
-                    }
-                } else {
-                    Style::default().fg(theme.text_secondary)
-                }
-            };
-
-            let h_l = |f, l| {
-                if f_field == f {
-                    if is_ed {
-                        format!(" >> [EDITING] {}", l)
-                    } else {
-                        format!(" >> {}", l)
-                    }
-                } else {
-                    format!("    {}", l)
-                }
-            };
-
-            let inner = block.inner(top_section);
-            let host_label = h_l(SettingsField::Host, "Webhook Host: ");
-            let offset_label = h_l(SettingsField::Offset, "Visualizer Offset (ms): ");
-            let host_text = input_tail(
-                &app.settings_input,
-                inner
-                    .width
-                    .saturating_sub(Line::from(host_label.as_str()).width() as u16 + 1),
-            );
-            let offset_text = input_tail(
-                &app.offset_input,
-                inner
-                    .width
-                    .saturating_sub(Line::from(offset_label.as_str()).width() as u16 + 1),
-            );
-
-            let p = Paragraph::new(vec![
-                Line::from("Configure your experience:"),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled(host_label.as_str(), h_s(SettingsField::Host)),
-                    Span::styled(host_text, h_s(SettingsField::Host)),
-                ]),
-                Line::from(vec![
-                    Span::styled(offset_label.as_str(), h_s(SettingsField::Offset)),
-                    Span::styled(offset_text, h_s(SettingsField::Offset)),
-                ]),
-                Line::from(vec![
-                    Span::styled(
-                        h_l(SettingsField::Theme, "Color Theme: "),
-                        h_s(SettingsField::Theme),
-                    ),
-                    Span::styled(format!("< {} >", app.theme), h_s(SettingsField::Theme)),
-                ]),
-                Line::from(vec![
-                    Span::styled(
-                        h_l(SettingsField::VizStyle, "Visualizer Style: "),
-                        h_s(SettingsField::VizStyle),
-                    ),
-                    Span::styled(
-                        format!("< {} >", app.viz_style),
-                        h_s(SettingsField::VizStyle),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled(
-                        h_l(SettingsField::Layout, "UI Layout: "),
-                        h_s(SettingsField::Layout),
-                    ),
-                    Span::styled(format!("< {} >", app.layout), h_s(SettingsField::Layout)),
-                ]),
-                Line::from(""),
-                Line::from(if is_ed {
-                    Span::styled(
-                        "TYPE TO EDIT, ENTER TO SAVE, ESC TO CANCEL",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Span::styled(
-                        "NAVIGATE WITH ARROWS/TAB, ENTER ON TEXT TO EDIT, ESC TO EXIT",
-                        Style::default().fg(theme.text_secondary),
-                    )
-                }),
-            ])
-            .block(block)
-            .alignment(Alignment::Left);
-
-            f.render_widget(p, top_section);
-
-            // Derive positions from the rendered labels and terminal-cell widths.
-            if is_ed && inner.width > 0 && inner.height > 0 {
-                let (row, label, text) = match f_field {
-                    SettingsField::Host => (2, host_label.as_str(), host_text),
-                    SettingsField::Offset => (3, offset_label.as_str(), offset_text),
-                    _ => (inner.height, "", ""),
-                };
-                let column = Line::from(label).width() + Line::from(text).width();
-                if row < inner.height && column < usize::from(inner.width) {
-                    f.set_cursor_position((inner.x + column as u16, inner.y + row));
-                }
-            }
-        }
-        View::Debug => {
-            let ws_status = if app.ws_connected {
-                Span::styled(
-                    " CONNECTED ",
-                    Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if app.ws_connecting {
-                Span::styled(
-                    " CONNECTING... ",
-                    Style::default()
-                        .bg(Color::Yellow)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled(
-                    " DISCONNECTED ",
-                    Style::default()
-                        .bg(Color::Red)
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                )
-            };
-
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Plain)
-                .title(vec![
-                    Span::raw(" Debug Console "),
-                    ws_status,
-                    Span::raw(" (Press 's' to Save Spectrogram) "),
-                ])
-                .title_alignment(Alignment::Left)
-                .border_style(Style::default().fg(Color::Yellow));
-
-            let log_lines: Vec<Line> = app
-                .debug_logs
-                .iter()
-                .rev()
-                .map(|l| Line::from(l.as_str()))
-                .collect();
-
-            let p = Paragraph::new(log_lines)
-                .block(block)
-                .wrap(Wrap { trim: false });
-
-            f.render_widget(p, top_section);
-        }
-        _ => {
-            render_player_ui(f, app, &theme, top_section);
-        }
+    .split(area);
+    let content = app.content_view();
+    render_header(f, app, &theme, content, rows[0]);
+    match content {
+        View::Settings => views::settings(f, app, &theme, rows[1]),
+        View::Lyrics => views::lyrics(f, app, &theme, rows[1]),
+        View::Debug => views::diagnostics(f, app, &theme, rows[1]),
+        _ => render_player_ui(f, app, &theme, rows[1]),
     }
-
-    render_footer(f, app, &theme, status_bar_area);
-
+    render_footer(f, app, &theme, rows[2]);
     if app.input_mode == InputMode::Editing {
-        let area = popup_rect(70, 5, f.area());
-        f.render_widget(Clear, area);
-
-        let loading_text = if app.is_loading { " ⏳ " } else { "" };
-        let input_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(format!(" Add a track or URL {} ", loading_text))
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(theme.highlight));
-
-        let inner = input_block.inner(area);
-        let (text, cursor_column) = input_window(&app.input, app.input_cursor, inner.width);
-        let p = Paragraph::new(text)
-            .block(input_block)
-            .style(Style::default().fg(Color::White));
-        f.render_widget(p, area);
-
-        if inner.width > 0 && inner.height > 0 {
-            f.set_cursor_position((inner.x + cursor_column, inner.y));
-        }
+        views::track_input(f, app, &theme);
     }
-
     match app.view {
         View::Menu => render_palette(f, app, &theme),
         View::Help => render_help(f, app, &theme),
-        View::ConfirmClear => render_clear_confirmation(f, &theme),
+        View::ConfirmClear => render_clear_confirmation(f, app, &theme),
+        View::FilterMenu => views::menu(f, app, &theme, false),
+        View::AuthMenu => views::menu(f, app, &theme, true),
+        View::AuthResult => views::account_info(f, app, &theme),
+        View::AppInfo => views::about(f, &theme),
+        View::UpdateFound => views::update(f, app, &theme),
         _ => {}
     }
-
-    if app.view == View::FilterMenu {
-        let area = popup_rect(52, 13, f.area());
-
-        // Shadow
-        let shadow_area = Rect {
-            x: area.x + 1,
-            y: area.y + 1,
-            width: area.width,
-            height: area.height,
-        };
-        if shadow_area.right() < f.area().right() && shadow_area.bottom() < f.area().bottom() {
-            f.render_widget(Block::default().bg(Color::Rgb(10, 10, 20)), shadow_area);
-        }
-
-        f.render_widget(Clear, area);
-
-        let loading_text = if app.is_loading { " ⏳ " } else { "" };
-        let menu_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(format!(" Select Filter {} ", loading_text))
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(theme.primary));
-
-        let items: Vec<ListItem> = app
-            .filter_items
-            .iter()
-            .map(|i| ListItem::new(format!("  {}  ", *i)))
-            .collect();
-
-        let list = List::new(items)
-            .block(menu_block)
-            .highlight_style(
-                Style::default()
-                    .bg(theme.primary)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(" >> ");
-
-        f.render_stateful_widget(list, area, &mut app.filter_state);
-    }
-
-    if app.view == View::AuthMenu {
-        let area = popup_rect(52, 7, f.area());
-
-        // Shadow
-        let shadow_area = Rect {
-            x: area.x + 1,
-            y: area.y + 1,
-            width: area.width,
-            height: area.height,
-        };
-        if shadow_area.right() < f.area().right() && shadow_area.bottom() < f.area().bottom() {
-            f.render_widget(Block::default().bg(Color::Rgb(10, 10, 20)), shadow_area);
-        }
-
-        f.render_widget(Clear, area);
-
-        let loading_text = if app.is_loading { " ⏳ " } else { "" };
-        let menu_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(format!(" Auth {} ", loading_text))
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(theme.primary));
-
-        let items: Vec<ListItem> = app
-            .auth_menu_items
-            .iter()
-            .map(|i| ListItem::new(format!("  {}  ", *i)))
-            .collect();
-
-        let list = List::new(items)
-            .block(menu_block)
-            .highlight_style(
-                Style::default()
-                    .bg(theme.primary)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(" >> ");
-
-        f.render_stateful_widget(list, area, &mut app.auth_menu_state);
-    }
-
-    if app.view == View::AuthResult {
-        let area = popup_rect(72, 12, f.area());
-        f.render_widget(Clear, area);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(" Auth Info ")
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(theme.primary));
-
-        let text = app.auth_info_text.as_deref().unwrap_or("No data.");
-        let p = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
-
-        f.render_widget(p, area);
-    }
-
-    if app.view == View::AppInfo {
-        let area = popup_rect(72, 18, f.area());
-        f.render_widget(Clear, area);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(" Build Compatibility Info ")
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(theme.highlight));
-
-        let text = vec![
-            Line::from(Span::styled(
-                "BUILD COMPATIBILITY",
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .fg(Color::Yellow),
-            )),
-            Line::from(""),
-            Line::from("This version of Jorik CLI is intended for use with"),
-            Line::from(vec![
-                Span::raw("the "),
-                Span::styled(
-                    "INTERNAL DEV VERSION",
-                    Style::default()
-                        .fg(theme.highlight)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" of Jorik bot."),
-            ]),
-            Line::from(""),
-            Line::from("The production version will work, but with significantly"),
-            Line::from("reduced functionality (limited real-time features)."),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("Current Version: "),
-                Span::styled(env!("CARGO_PKG_VERSION"), Style::default().fg(Color::White)),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Press 'i' or Esc to close",
-                Style::default().fg(theme.text_secondary),
-            )),
-        ];
-
-        let p = Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .block(block)
-            .wrap(Wrap { trim: true });
-
-        f.render_widget(p, area);
-    }
-
-    if let Some(msg) = &app.fatal_error {
-        let area = popup_rect(72, 8, f.area());
-        f.render_widget(Clear, area);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .title(" ⚠ Connection Error ")
-            .title_alignment(Alignment::Center)
-            .style(Style::default())
-            .border_style(Style::default().fg(Color::Red));
-
-        let p = Paragraph::new(msg.as_str())
-            .block(block)
-            .style(
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
-
-        f.render_widget(p, area);
+    if let Some(message) = &app.fatal_error {
+        views::connection_error(f, app, &theme, message);
     }
 }
 
+#[cfg(test)]
+mod polish_tests;
 #[cfg(test)]
 mod refinement_tests;
 #[cfg(test)]
@@ -2539,6 +2156,14 @@ fn input_tail(input: &str, width: u16) -> &str {
         }
     }
     ""
+}
+
+fn cursor_boundary(text: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(text.len());
+    while !text.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    cursor
 }
 
 fn input_window(input: &str, cursor: usize, width: u16) -> (&str, u16) {

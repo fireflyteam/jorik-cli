@@ -1,0 +1,24 @@
+  JORIK     1 Player  2 Lyrics  3 Settings  4 Logs                      ● Live
+  example.com  /  Guild guild
+ ─╭ Command palette ─────────────────────────────────────────────────────────╮─
+ ╭│  / queue                                                                 │╮
+ ││  4 actions · type to filter                                              ││
+ ││ ▎ Shuffle queue                                                          ││
+ ││   Clear queue…                                                        c  ││
+ ││   Loop queue                                                             ││
+ ││   Refresh queue                                                       r  ││
+ ││                                                                          ││
+ ╰│                                                                          │╯
+ ╭│                                                                          │╮
+ ││                                                                          ││
+ ││                                                                          ││
+ ││                                                                          ││
+ ││                                                                          ││
+ ││                                                                          ││
+ ││                                                                          ││
+ ││ Shuffle upcoming tracks on the server.                                   ││
+ ││ ↑↓ select · Enter run · Esc close                                        ││
+ │╰──────────────────────────────────────────────────────────────────────────╯│
+ ╰────────────────────────────────────────────────────────────────────────────╯
+  · Queue focus · Tab switches panels · Queue selection is browsing only
+  ↑↓  select   Enter  run   Esc  close

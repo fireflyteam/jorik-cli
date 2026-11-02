@@ -32,7 +32,7 @@ base64 = "0.21"
 icy_sixel = "0.4"
 terminal_size = "0.3"
 ratatui-image = { version = "10.0.2", default-features = false, features = ["image-defaults", "crossterm"] }
-ratatui = "0.30"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 atty = "0.2"
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3.31"

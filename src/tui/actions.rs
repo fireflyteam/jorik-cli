@@ -31,6 +31,34 @@ pub(super) struct Command {
     pub shortcut: &'static str,
 }
 
+impl Command {
+    pub(super) fn description(&self) -> &'static str {
+        match self.action {
+            Action::Pause => "Toggle playback; the server confirms the actual state.",
+            Action::Skip => "Move past the current track.",
+            Action::Stop => "Stop playback in the current voice channel.",
+            Action::Shuffle => "Shuffle upcoming tracks on the server.",
+            Action::Clear => "Remove upcoming tracks. Requires explicit confirmation.",
+            Action::LoopTrack | Action::LoopQueue | Action::LoopOff => {
+                "Change repeat mode for this session."
+            }
+            Action::Mode247 => "Toggle persistent voice-channel connection.",
+            Action::Filters => "Choose an audio preset or clear active filters.",
+            Action::Lyrics => "Read lyrics for the current track.",
+            Action::Turip => "Request the Turip track.",
+            Action::Auth => "Sign in, inspect saved credentials, or sign out.",
+            Action::Settings => "Choose a server, theme, layout, and visualizer.",
+            Action::Refresh => "Reload the queue without interrupting playback.",
+            Action::Visualizer => "Show spectrum data when the terminal has enough room.",
+            Action::Help => "All keyboard shortcuts, including text editing.",
+            Action::Debug => "Inspect connection events and save spectrum data.",
+            Action::Info => "Version, compatibility, and security information.",
+            Action::Update => "Review an update; nothing installs without confirmation.",
+            Action::Quit => "Close Jorik. This does not stop server playback.",
+        }
+    }
+}
+
 pub(super) const COMMANDS: &[Command] = &[
     Command {
         action: Action::Pause,
@@ -203,7 +231,10 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
                 },
             ));
         }
-        Action::Filters => app.view = View::FilterMenu,
+        Action::Filters => {
+            app.overlay_return = app.view;
+            app.view = View::FilterMenu;
+        }
         Action::Lyrics => {
             app.view = View::Lyrics;
             tokio::spawn(async_fetch_lyrics(app_arc));
@@ -214,7 +245,10 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
                 "https://open.spotify.com/track/2RQWB4Asy1rjZL4IUcJ7kn".to_string(),
             ));
         }
-        Action::Auth => app.view = View::AuthMenu,
+        Action::Auth => {
+            app.overlay_return = app.view;
+            app.view = View::AuthMenu;
+        }
         Action::Settings => {
             app.settings_input = app.base_url.clone();
             app.view = View::Settings;
@@ -233,7 +267,10 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
         }
         Action::Help => app.open_overlay(View::Help),
         Action::Debug => app.view = View::Debug,
-        Action::Info => app.view = View::AppInfo,
+        Action::Info => {
+            app.overlay_return = app.view;
+            app.view = View::AppInfo;
+        }
         Action::Update => {
             if app.update_info.is_some() {
                 app.update_notice = false;

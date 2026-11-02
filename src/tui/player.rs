@@ -1,13 +1,16 @@
+use super::design::{fit_text, key_hint, panel, single_line, time_label};
 use super::*;
 
 pub(super) fn render_player_ui(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     let zen = app.layout == "Zen"
         && app.focus == PlayerFocus::Playback
         && app.visualizer_enabled
-        && area.width >= 80
+        && area.width >= 76
         && area.height >= 16;
-    let now_height = if area.height >= 10 {
-        6
+    let now_height = if area.height >= 15 {
+        8
+    } else if area.height >= 9 {
+        5
     } else {
         3.min(area.height)
     };
@@ -23,7 +26,7 @@ pub(super) fn render_player_ui(f: &mut Frame, app: &mut App, theme: &Theme, area
             render_visualizer(f, app, theme, rows[1]);
         } else {
             let columns =
-                Layout::horizontal([Constraint::Percentage(65), Constraint::Percentage(35)])
+                Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
                     .split(content);
             if app.layout == "Sidebar" {
                 render_visualizer(f, app, theme, columns[0]);
@@ -40,137 +43,263 @@ pub(super) fn render_player_ui(f: &mut Frame, app: &mut App, theme: &Theme, area
 
 fn render_now_playing(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let focused = app.focus == PlayerFocus::Playback;
-    let state = if app.current_track.is_none() {
-        "Idle"
-    } else if !app.has_playback_state {
-        "State unavailable"
-    } else if app.paused {
-        "Paused"
-    } else {
-        "Playing"
-    };
-    let block = Block::bordered()
-        .border_style(Style::default().fg(if focused {
-            theme.highlight
-        } else {
-            theme.border
-        }))
-        .title(format!(" Now playing · {state} · Loop {} ", app.loop_mode))
-        .title_style(Style::default().fg(theme.highlight))
-        .padding(ratatui::widgets::Padding::horizontal(1));
+    let block = panel(" Now playing ", theme, focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
+    if inner.is_empty() {
+        return;
+    }
     if let Some(track) = &app.current_track {
         let (title, artist) = track
             .rsplit_once(" - ")
             .unwrap_or((track, "Unknown artist"));
-        let info = Paragraph::new(vec![
-            Line::from(Span::styled(
-                title,
-                Style::default().fg(Color::White).bold(),
-            )),
-            Line::from(Span::styled(
-                artist,
+        let (state, color) = if !app.has_playback_state {
+            ("○ State unavailable", theme.text_secondary)
+        } else if app.paused {
+            ("Ⅱ Paused", theme.warning())
+        } else {
+            ("● Playing", theme.success())
+        };
+        let compact = inner.height < 5;
+        let mut lines = Vec::new();
+        if !compact {
+            lines.push(Line::from(vec![
+                Span::styled(state, Style::default().fg(color).bold()),
+                Span::styled(
+                    format!("   ·   Loop {}", app.loop_mode),
+                    Style::default().fg(theme.text_secondary),
+                ),
+            ]));
+        }
+        lines.push(Line::from(Span::styled(
+            fit_text(&single_line(title, app), inner.width),
+            Style::default().fg(theme.text()).bold(),
+        )));
+        if inner.height > 1 {
+            lines.push(Line::from(Span::styled(
+                fit_text(&single_line(artist, app), inner.width),
                 Style::default().fg(theme.text_secondary),
-            )),
-        ]);
-        f.render_widget(info, inner);
+            )));
+        }
+        f.render_widget(Paragraph::new(lines), inner);
         if inner.height >= 3 {
-            let label = if app.duration_ms > 0 {
-                format!(
-                    "{:02}:{:02} / {:02}:{:02}",
-                    app.elapsed_ms / 60000,
-                    (app.elapsed_ms / 1000) % 60,
-                    app.duration_ms / 60000,
-                    (app.duration_ms / 1000) % 60
-                )
+            let progress_y = if compact {
+                inner.bottom() - 1
             } else {
-                "Live / duration unavailable".to_string()
+                inner.bottom() - 2
             };
-            let ratio = if app.duration_ms > 0 {
+            let elapsed = if app.has_playback_state {
+                time_label(app.elapsed_ms)
+            } else {
+                "--:--".to_string()
+            };
+            let duration = if app.has_playback_state && app.duration_ms > 0 {
+                time_label(app.duration_ms)
+            } else {
+                "--:--".to_string()
+            };
+            let columns = Layout::horizontal([
+                Constraint::Length(7),
+                Constraint::Min(0),
+                Constraint::Length(8),
+            ])
+            .split(Rect::new(inner.x, progress_y, inner.width, 1));
+            f.render_widget(
+                Paragraph::new(elapsed).style(Style::default().fg(theme.text_secondary)),
+                columns[0],
+            );
+            let ratio = if app.has_playback_state && app.duration_ms > 0 {
                 (app.elapsed_ms as f64 / app.duration_ms as f64).clamp(0.0, 1.0)
             } else {
                 0.0
             };
             f.render_widget(
-                Gauge::default()
+                LineGauge::default()
                     .ratio(ratio)
-                    .label(label)
-                    .gauge_style(Style::default().fg(theme.primary).bg(theme.bg)),
+                    .label("")
+                    .filled_style(Style::default().fg(theme.primary))
+                    .unfilled_style(Style::default().fg(theme.border))
+                    .filled_symbol("━")
+                    .unfilled_symbol("─"),
+                columns[1],
+            );
+            f.render_widget(
+                Paragraph::new(duration)
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(theme.text_secondary)),
+                columns[2],
+            );
+        }
+        if !compact {
+            let label = if !app.has_playback_state {
+                "pause/resume"
+            } else if app.paused {
+                "resume"
+            } else {
+                "pause"
+            };
+            let mut controls = key_hint("Space", label, theme);
+            controls.extend(key_hint("s", "skip", theme));
+            controls.extend(key_hint("w", "stop", theme));
+            f.render_widget(
+                Paragraph::new(Line::from(controls)),
                 Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
             );
         }
     } else {
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from("Nothing is playing"),
+        let mut lines = vec![
+            Line::from(Span::styled(
+                "Make room for your next favorite.",
+                Style::default().fg(theme.text()).bold(),
+            )),
+            Line::from(Span::styled(
+                "Join a voice channel, then add a track or paste a URL.",
+                Style::default().fg(theme.text_secondary),
+            )),
+        ];
+        if inner.height >= 5 {
+            lines.insert(
+                0,
                 Line::from(Span::styled(
-                    "/ Add a track or URL · Join a voice channel to start",
-                    Style::default().fg(theme.text_secondary),
+                    "○ Ready to play",
+                    Style::default().fg(theme.highlight),
                 )),
-            ]),
-            inner,
-        );
+            );
+            lines.push(Line::from(""));
+            lines.push(Line::from(key_hint("/", "add music", theme)));
+        }
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 }
 
 fn render_queue(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     app.clamp_queue_selection();
     let focused = app.focus == PlayerFocus::Queue;
-    let selected = app.queue_state.selected().map_or(0, |i| i + 1);
-    let block = Block::bordered()
-        .border_style(Style::default().fg(if focused {
-            theme.highlight
+    let title = format!(
+        " Queue · {} tracks{} ",
+        app.queue.len(),
+        if app.queue_error.is_some() {
+            " · cached"
         } else {
-            theme.border
-        }))
-        .title(format!(
-            " Queue · {} tracks · {selected}/{} ",
-            app.queue.len(),
-            app.queue.len()
-        ))
-        .title_style(Style::default().fg(theme.highlight))
-        .padding(ratatui::widgets::Padding::horizontal(1));
-    app.queue_page_size = usize::from(block.inner(area).height).max(1);
+            ""
+        }
+    );
+    let block = panel(title, theme, focused);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.is_empty() {
+        return;
+    }
+    let has_labels = inner.height >= 5 && inner.width >= 40;
+    let rows = Layout::vertical([
+        Constraint::Length(u16::from(has_labels)),
+        Constraint::Min(0),
+        Constraint::Length(u16::from(inner.height >= 4)),
+    ])
+    .split(inner);
+    app.queue_page_size = usize::from(rows[1].height).max(1);
     if app.queue.is_empty() {
+        let (title, hint) = if app.is_loading {
+            ("Fetching your queue…", "Your music will appear here.")
+        } else if app.queue_error.is_some() {
+            (
+                "Queue could not be loaded.",
+                "Press r to retry. Existing playback is not interrupted.",
+            )
+        } else {
+            ("Nothing up next. Yet.", "Press / to add a track or URL.")
+        };
         f.render_widget(
-            Paragraph::new("Queue is empty. Press / to add a track.")
-                .style(Style::default().fg(theme.text_secondary))
-                .block(block),
-            area,
+            Paragraph::new(vec![
+                Line::from(Span::styled(title, Style::default().fg(theme.text()))),
+                Line::from(Span::styled(
+                    hint,
+                    Style::default().fg(theme.text_secondary),
+                )),
+            ])
+            .wrap(Wrap { trim: true }),
+            rows[1],
         );
         return;
+    }
+    let artist_width = if rows[1].width >= 55 {
+        (rows[1].width / 3).min(28)
+    } else {
+        0
+    };
+    let title_width = rows[1].width.saturating_sub(7 + artist_width);
+    if has_labels {
+        let header = if artist_width > 0 {
+            format!(
+                "   #   {:width$} ARTIST",
+                "TITLE",
+                width = usize::from(title_width)
+            )
+        } else {
+            "   #   TITLE / ARTIST".to_string()
+        };
+        f.render_widget(
+            Paragraph::new(header).style(Style::default().fg(theme.text_secondary)),
+            rows[0],
+        );
     }
     let items = app
         .queue
         .iter()
         .enumerate()
-        .map(|(i, track)| ListItem::new(format!(" {:>2}  {track}", i + 1)))
+        .map(|(i, track)| {
+            let clean = single_line(track, app);
+            let (title, artist) = clean.rsplit_once(" - ").unwrap_or((&clean, ""));
+            let title = fit_text(if artist_width == 0 { &clean } else { title }, title_width);
+            let padding =
+                usize::from(title_width).saturating_sub(Line::from(title.as_str()).width());
+            let mut spans = vec![
+                Span::styled(
+                    format!("{:>3}  ", i + 1),
+                    Style::default().fg(theme.text_secondary),
+                ),
+                Span::styled(title, Style::default().fg(theme.text())),
+            ];
+            if artist_width > 0 {
+                spans.push(Span::raw(" ".repeat(padding + 1)));
+                spans.push(Span::styled(
+                    fit_text(artist, artist_width.saturating_sub(1)),
+                    Style::default().fg(theme.text_secondary),
+                ));
+            }
+            ListItem::new(Line::from(spans))
+        })
         .collect::<Vec<_>>();
-    let selected_style = if focused {
-        Style::default().bg(theme.primary).fg(Color::Black).bold()
-    } else {
-        Style::default().fg(theme.highlight)
-    };
-    let list = List::new(items)
-        .block(block)
-        .style(Style::default().fg(theme.text_secondary))
-        .highlight_style(selected_style)
-        .highlight_symbol("› ");
-    f.render_stateful_widget(list, area, &mut app.queue_state);
+    let list = List::new(items).highlight_symbol("▎ ").highlight_style(
+        Style::default()
+            .bg(if focused {
+                theme.selection()
+            } else {
+                theme.raised()
+            })
+            .fg(theme.highlight)
+            .bold(),
+    );
+    f.render_stateful_widget(list, rows[1], &mut app.queue_state);
+    let first = app.queue_state.offset() + 1;
+    let last = (app.queue_state.offset() + app.queue_page_size).min(app.queue.len());
+    let label = format!(
+        "{first}–{last} of {} loaded  ·  {}",
+        app.queue.len(),
+        if focused {
+            "↑↓ browse · Enter adds music"
+        } else {
+            "Tab to focus"
+        }
+    );
+    f.render_widget(
+        Paragraph::new(label).style(Style::default().fg(theme.text_secondary)),
+        rows[2],
+    );
 }
 
 fn render_visualizer(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
-    let spec_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(theme.border))
-        .title(" Visualizer ")
-        .title_style(
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD),
-        );
+    let spec_block = panel(" Visualizer · spectrum ", theme, false);
 
     if app.current_track.is_some() && app.spectrogram.is_some() {
         let (b_w, b_g) = match app.viz_style.as_str() {
@@ -238,15 +367,9 @@ fn render_visualizer(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
                     }
                 };
 
-                let label = if app.viz_style == "Line" || app.viz_style == "Wave" {
-                    String::new()
-                } else {
-                    format!("{:2}", v.min(99))
-                };
-
                 Bar::default()
                     .value(v)
-                    .label(Span::from(label))
+                    .label(Span::raw(""))
                     .style(Style::default().fg(color))
                     .text_value(String::new())
             })
@@ -288,7 +411,8 @@ fn render_visualizer(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
         }
     } else {
         f.render_widget(
-            Paragraph::new("Visualization unavailable")
+            Paragraph::new("No spectrum data\nPlayback works without visualization.")
+                .style(Style::default().fg(theme.text_secondary))
                 .block(spec_block)
                 .alignment(Alignment::Center),
             area,

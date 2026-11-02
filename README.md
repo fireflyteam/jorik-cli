@@ -35,6 +35,15 @@ and `curl | bash` installation are unsupported.
 
 ## Interactive player
 
+![Jorik player at 80×24](docs/assets/tui-player.png)
+
+*Deterministic UI preview with sample data; no live account or server content.*
+
+The 0.5 player uses layered dark surfaces, rounded panels, readable title/artist
+columns, explicit focus rings, and context-aware keyboard hints. Wide terminals
+also show the spectrum; compact terminals prioritize playback and queue browsing.
+Dialogs keep your place in the underlying screen and return there when dismissed.
+
 ```sh
 cargo run -- tui
 # Or, with an installed binary:
@@ -64,12 +73,17 @@ The header shows the server, guild, and WebSocket status; REST remains the fallb
 | c | Clear queue, with explicit confirmation |
 | v | Toggle visualization |
 | 1 / 2 / 3 / 4 | Player / lyrics / settings / diagnostics |
+| r | Refresh queue, or refresh lyrics on the lyrics screen |
 | u | Review an available update |
 | Esc | Cancel editing, close a dialog, or dismiss a notification |
 | q / Ctrl+c | Quit; q remains text in input fields |
 
 Track input supports cursor movement, Home/End, Delete/Backspace, bracketed paste,
-and Ctrl+u to clear. Settings use Enter to save and Escape to discard text edits.
+and Ctrl+u to clear. Settings text fields support the same cursor editing and
+paste behavior; Enter saves and Escape discards the draft. Appearance changes
+preview and save immediately. Blank track submissions stay open with inline
+feedback instead of silently closing. Lyrics support PageUp/PageDown, Home/End,
+and refresh, and are invalidated when the track changes.
 
 The player adapts to the terminal: an 80×24 window prioritizes playback and queue;
 wide, tall windows can also show visualization. Zen remains a presentation mode;
