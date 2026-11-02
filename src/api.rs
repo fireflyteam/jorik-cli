@@ -166,15 +166,6 @@ pub struct LowPassOptions {
     pub smoothing: Option<f32>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Auth {
-    pub token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub avatar_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-}
-
 #[derive(Deserialize, Debug, Clone)]
 pub struct WsEvent {
     #[serde(rename = "type")]
@@ -244,10 +235,6 @@ fn default_layout() -> String {
     "Standard".to_string()
 }
 
-pub fn config_file_path() -> Option<PathBuf> {
-    config_dir().map(|p| p.join("jorik-cli").join("auth.json"))
-}
-
 pub fn settings_file_path() -> Option<PathBuf> {
     config_dir().map(|p| p.join("jorik-cli").join("settings.json"))
 }
@@ -287,60 +274,6 @@ pub fn save_settings(settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-pub fn save_token(token: &str, avatar_url: Option<&str>, username: Option<&str>) -> Result<()> {
-    let path = config_file_path().context("cannot determine config path")?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context("creating config directory")?;
-    }
-
-    let auth = Auth {
-        token: token.trim().to_string(),
-        avatar_url: avatar_url.map(|s| s.to_string()),
-        username: username.map(|s| s.to_string()),
-    };
-
-    let json = serde_json::to_string_pretty(&auth).context("serializing auth")?;
-    write_auth_file(&path, &json)?;
-    Ok(())
-}
-
-fn write_auth_file(path: &std::path::Path, json: &str) -> Result<()> {
-    use std::io::Write;
-
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path).context("opening auth file")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .context("restricting auth file permissions")?;
-    }
-    file.set_len(0).context("truncating auth file")?;
-    file.write_all(json.as_bytes())
-        .context("writing auth file")?;
-    Ok(())
-}
-
-pub fn load_auth() -> Option<Auth> {
-    if let Some(path) = config_file_path()
-        && let Ok(contents) = fs::read_to_string(&path)
-        && let Ok(auth) = serde_json::from_str::<Auth>(&contents)
-    {
-        return Some(auth);
-    }
-    None
-}
-
-pub fn load_token() -> Option<String> {
-    load_auth().map(|a| a.token)
-}
-
 pub fn validate_base_url(base: &str) -> Result<()> {
     let url = Url::parse(base).context("invalid server URL")?;
     anyhow::ensure!(
@@ -355,6 +288,31 @@ pub fn validate_base_url(base: &str) -> Result<()> {
         "server URL must not contain credentials, a query, or a fragment"
     );
     Ok(())
+}
+
+pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+
+/// Bound decoded bytes even when Content-Length is absent or dishonest.
+pub async fn response_text(mut response: reqwest::Response) -> Result<String> {
+    if let Some(length) = response.content_length() {
+        anyhow::ensure!(
+            length <= MAX_RESPONSE_BYTES as u64,
+            "server response exceeds the size limit"
+        );
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| anyhow::anyhow!("server response could not be read"))?
+    {
+        anyhow::ensure!(
+            chunk.len() <= MAX_RESPONSE_BYTES.saturating_sub(body.len()),
+            "server response exceeds the size limit"
+        );
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body).map_err(|_| anyhow::anyhow!("server response is not valid UTF-8"))
 }
 
 pub fn build_url(base: &str, path: &str) -> String {

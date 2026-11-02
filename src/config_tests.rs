@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn untrusted_elapsed_time_cannot_create_an_unbounded_progress_bar() {
+    let json = serde_json::json!({"action":"nowplaying","now_playing":{"track":{"title":"Track"},"elapsedMs":u64::MAX,"durationMs":1}});
+    assert!(summarize(&json).unwrap().len() < 512);
+}
+
+#[test]
+fn legacy_migration_and_erasure_require_explicit_confirmation() {
+    assert!(Cli::try_parse_from(["jorik", "auth", "migrate"]).is_err());
+    assert!(Cli::try_parse_from(["jorik", "auth", "clear-legacy"]).is_err());
+    let migrate = Cli::try_parse_from([
+        "jorik",
+        "auth",
+        "migrate",
+        "--confirm-server",
+        "https://custom.example",
+    ])
+    .unwrap();
+    assert!(matches!(
+        migrate.command,
+        Commands::Auth {
+            command: AuthSubcommand::Migrate { .. }
+        }
+    ));
+    let clear = Cli::try_parse_from(["jorik", "auth", "clear-legacy", "--confirm"]).unwrap();
+    assert!(matches!(
+        clear.command,
+        Commands::Auth {
+            command: AuthSubcommand::ClearLegacy { confirm: true }
+        }
+    ));
+}
+
+#[test]
 fn cli_uses_the_shared_api_default() {
     let command = Cli::command();
     let base_url = command

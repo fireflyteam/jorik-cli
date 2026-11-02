@@ -34,7 +34,7 @@ pub(super) fn render_header(f: &mut Frame, app: &App, theme: &Theme, view: View,
     let context = Line::from(vec![
         Span::styled(format!(" {connection}"), Style::default().fg(color)),
         Span::styled(
-            format!(" · {host} · Guild {guild}"),
+            crate::output::safe_text(&format!(" · {host} · Guild {guild}"), app.token.as_deref()),
             Style::default().fg(theme.text_secondary),
         ),
     ]);
@@ -89,7 +89,7 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
     f.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                status.replace(['\n', '\r'], " "),
+                crate::output::safe_text(&status, app.token.as_deref()).replace(['\n', '\r'], " "),
                 Style::default().fg(color),
             )),
             Line::from(Span::styled(

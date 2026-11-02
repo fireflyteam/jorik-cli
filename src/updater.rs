@@ -1,5 +1,6 @@
-//! Release integrity is anchored in GitHub's HTTPS API, not in an independently
-//! signed publisher key. No Jorik credentials or configurable server URL are used.
+//! Release integrity requires both SHA-256 metadata and Sigstore build provenance.
+//! The trusted GitHub CLI verifies the signing identity, workflow, and exact tag.
+//! No Jorik credentials or configurable server URL are passed to the verifier.
 
 use anyhow::{Context, Result, bail, ensure};
 use reqwest::{Client, Response, Url, redirect};
@@ -456,6 +457,87 @@ fn windows_command(installer: &Path, destination: &Path) -> Result<std::process:
     Ok(command)
 }
 
+fn attestation_command(artifact: &Path, tag: &str) -> Result<tokio::process::Command> {
+    tag_version(tag)?;
+    let mut command = tokio::process::Command::new("gh");
+    command
+        .arg("attestation")
+        .arg("verify")
+        .arg(artifact)
+        .args([
+            "--hostname",
+            "github.com",
+            "--repo",
+            "fireflyteam/jorik-cli",
+            "--cert-oidc-issuer",
+            "https://token.actions.githubusercontent.com",
+            "--predicate-type",
+            "https://slsa.dev/provenance/v1",
+            "--cert-identity",
+        ])
+        .arg(format!(
+            "https://github.com/fireflyteam/jorik-cli/.github/workflows/build.yml@refs/tags/{tag}"
+        ))
+        .arg("--source-ref")
+        .arg(format!("refs/tags/{tag}"))
+        .args([
+            "--deny-self-hosted-runners",
+            "--digest-alg",
+            "sha256",
+            "--limit",
+            "5",
+        ])
+        .env("GH_HOST", "github.com")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env_remove("JORIK_TOKEN")
+        .env_remove("GH_DEBUG")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    Ok(command)
+}
+
+async fn verify_attestation(artifact: &Path, tag: &str) -> Result<()> {
+    let status = tokio::time::timeout(
+        Duration::from_secs(90),
+        attestation_command(artifact, tag)?.status(),
+    )
+    .await
+    .context("signed build verification timed out")?
+    .context(
+        "cannot run provenance verifier; install a current GitHub CLI (gh) and authenticate it",
+    )?;
+    ensure!(
+        status.success(),
+        "signed build provenance verification failed; check gh authentication/version and the release's attestations. No hash-only fallback is allowed"
+    );
+    Ok(())
+}
+
+fn recheck_download(file: &mut File, asset: &VerifiedAsset) -> Result<()> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut hash = Sha256::new();
+    let mut length = 0u64;
+    let mut buffer = [0; 65536];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        length += count as u64;
+        ensure!(length <= asset.size, "verified download changed");
+        hash.update(&buffer[..count]);
+    }
+    let digest: [u8; 32] = hash.finalize().into();
+    ensure!(
+        length == asset.size && digest == asset.digest,
+        "verified download changed"
+    );
+    file.seek(SeekFrom::Start(0))?;
+    Ok(())
+}
+
 async fn install_inner(tag: &str) -> Result<()> {
     let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
     let version = tag_version(tag)?;
@@ -488,6 +570,9 @@ async fn install_inner(tag: &str) -> Result<()> {
         ".tar.gz"
     };
     let mut download = verified_response(response, &asset, staging.path(), suffix).await?;
+    println!("Verifying signed build provenance…");
+    verify_attestation(download.path(), tag).await?;
+    recheck_download(download.as_file_mut(), &asset)?;
     let destination = std::env::current_exe().context("locating installed executable")?;
     match target {
         Target::LinuxX64 => {

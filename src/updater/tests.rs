@@ -472,6 +472,45 @@ async fn published_release_verifies_without_installing() {
 }
 
 #[test]
+fn attestation_policy_pins_repository_workflow_tag_issuer_and_hosted_builds() {
+    let command = attestation_command(Path::new("/private/staged-artifact"), "v0.5.0").unwrap();
+    let native = command.as_std();
+    let args = native
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(native.get_program(), "gh");
+    for required in [
+        "fireflyteam/jorik-cli",
+        "github.com",
+        "https://token.actions.githubusercontent.com",
+        "https://slsa.dev/provenance/v1",
+        "refs/tags/v0.5.0",
+        "https://github.com/fireflyteam/jorik-cli/.github/workflows/build.yml@refs/tags/v0.5.0",
+        "--deny-self-hosted-runners",
+    ] {
+        assert!(args.iter().any(|arg| arg == required));
+    }
+    assert!(
+        native
+            .get_envs()
+            .any(|(key, value)| key == "JORIK_TOKEN" && value.is_none())
+    );
+    assert!(attestation_command(Path::new("file"), "../../other-ref").is_err());
+}
+
+#[test]
+fn modified_staged_bytes_fail_recheck_before_installation() {
+    let release = release("v0.5.0");
+    let asset = select_asset(&release, "v0.5.0", Target::LinuxX64).unwrap();
+    let mut file = staged_archive(b"test");
+    recheck_download(file.as_file_mut(), &asset).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(b"evil").unwrap();
+    assert!(recheck_download(file.as_file_mut(), &asset).is_err());
+}
+
+#[test]
 fn windows_launch_uses_direct_arguments_and_the_existing_install_directory() {
     let installer = Path::new("private-stage/verified.exe");
     let destination = Path::new("Program Files/Jorik/jorik.exe");

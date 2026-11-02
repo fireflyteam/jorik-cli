@@ -1,5 +1,43 @@
 use super::*;
 
+#[tokio::test]
+async fn decoded_response_limits_apply_with_and_without_content_length() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for chunked in [false, true] {
+        for length in [8, MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES + 1] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                let _ = stream.read(&mut request).await;
+                let body = "x".repeat(length);
+                let response = if chunked {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{length:x}\r\n{body}\r\n0\r\n\r\n"
+                    )
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}"
+                    )
+                };
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+            let response = reqwest::Client::new()
+                .get(format!("http://{address}"))
+                .send()
+                .await
+                .unwrap();
+            let result = response_text(response).await;
+            if length > MAX_RESPONSE_BYTES {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap().len(), length);
+            }
+        }
+    }
+}
+
 #[test]
 fn retired_saved_default_moves_to_the_new_api_without_changing_preferences() {
     for base_url in ["https://jorik.xserv.pp.ua", "https://jorik.xserv.pp.ua/"] {
@@ -46,34 +84,4 @@ fn server_urls_are_validated() {
     ] {
         assert!(validate_base_url(url).is_err(), "{url}");
     }
-}
-
-#[test]
-fn auth_file_round_trips() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("auth.json");
-    write_auth_file(&path, r#"{"token":"secret"}"#).unwrap();
-    write_auth_file(&path, r#"{"token":"x"}"#).unwrap();
-    let auth: Auth = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-    assert_eq!(auth.token, "x");
-}
-
-#[cfg(unix)]
-#[test]
-fn auth_file_is_private_even_when_replacing_an_existing_file() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("auth.json");
-    write_auth_file(&path, "{}").unwrap();
-    assert_eq!(
-        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-    write_auth_file(&path, "{}").unwrap();
-    assert_eq!(
-        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
 }

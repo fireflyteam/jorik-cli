@@ -2,19 +2,18 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use colored::Colorize;
 use dirs::config_dir;
-use open::that;
-use reqwest::{Client, Url};
+use reqwest::Client;
 use serde_json::Value;
-use std::fs;
 use std::io::{self, Write};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 mod api;
 mod ascii;
+mod auth;
+mod credentials;
 mod image;
+mod output;
 mod tui;
 mod updater;
 
@@ -23,7 +22,7 @@ pub use updater::ReleaseAsset as GiteaAsset;
 use api::*;
 
 /// CLI to interact with the Jorik webhook server.
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(name = "jorik CLI", author, version, about)]
 struct Cli {
     /// Base URL of the webhook server
@@ -195,6 +194,16 @@ enum AuthSubcommand {
     Signout,
     /// Show current saved auth info
     Info,
+    /// Bind old unscoped auth.json credentials to an explicitly confirmed server
+    Migrate {
+        #[arg(long)]
+        confirm_server: String,
+    },
+    /// Permanently remove old unscoped plaintext auth files
+    ClearLegacy {
+        #[arg(long, required = true)]
+        confirm: bool,
+    },
 }
 
 #[cfg(test)]
@@ -242,34 +251,83 @@ async fn main() -> Result<()> {
 
     let matches = Cli::command().get_matches();
     let mut cli = Cli::from_arg_matches(&matches)?;
+    // Recovery commands must work even with invalid saved server settings.
+    if let Commands::Auth { command } = &cli.command {
+        match command {
+            AuthSubcommand::Migrate { confirm_server } => {
+                return migrate_auth(confirm_server).await;
+            }
+            AuthSubcommand::ClearLegacy { confirm } => {
+                anyhow::ensure!(*confirm, "explicit confirmation is required");
+                credentials::clear_legacy().await?;
+                println!("Legacy plaintext credential files removed.");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
     let mut settings = api::load_settings();
     cli.base_url = resolve_base_url(
         &settings.base_url,
         &cli.base_url,
         matches.value_source("base_url"),
     );
-    // Pass the same resolved configuration to both interfaces.
+    // Canonicalize once; the same secure server identity is used by both interfaces.
+    cli.base_url = credentials::server_identity(&cli.base_url)?;
     settings.base_url = cli.base_url.clone();
-    api::validate_base_url(&settings.base_url)?;
 
     let client = Client::builder()
         .user_agent("jorik-cli")
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(10))
         .build()
         .context("building HTTP client")?;
 
+    if credentials::legacy_present() {
+        eprintln!(
+            "Unscoped plaintext credentials remain from 0.4.x. Use `auth migrate --confirm-server URL` or `auth clear-legacy --confirm`; they are never reused automatically."
+        );
+    }
+    // Authentication is handled before background update checks and credential
+    // resolution, so login/signout remain usable when migration or lookup fails.
+    if let Commands::Auth { command } = &cli.command {
+        return match command {
+            AuthSubcommand::Login => login(&cli.base_url).await,
+            AuthSubcommand::Signout => signout(&client, &cli.base_url, cli.token.as_deref()).await,
+            AuthSubcommand::Info => auth_info(&cli.base_url).await,
+            AuthSubcommand::Migrate { .. } | AuthSubcommand::ClearLegacy { .. } => {
+                unreachable!("recovery commands handled before settings resolution")
+            }
+        };
+    }
+    let saved = if cli.token.is_some() || matches!(cli.command, Commands::Health) {
+        None
+    } else {
+        credentials::load(&cli.base_url).await?
+    };
+    let token = cli
+        .token
+        .clone()
+        .or_else(|| saved.as_ref().map(|auth| auth.token.clone()));
+    if let Some(token) = &token {
+        credentials::validate_token(token)?;
+    }
+
+    if token.is_none() && !matches!(cli.command, Commands::Health | Commands::Tui { .. }) {
+        bail!(
+            "not authenticated for {}; run `auth login`, explicitly migrate legacy credentials, or supply JORIK_TOKEN",
+            cli.base_url
+        );
+    }
+
     if let Commands::Tui { guild_id, user_id } = cli.command {
-        if let Some((latest, _assets)) =
-            tui::run(settings, cli.token.or_else(load_token), guild_id, user_id).await?
-        {
+        if let Some((latest, _assets)) = tui::run(settings, token, guild_id, user_id).await? {
             return updater::install(&latest).await;
         }
         return Ok(());
     }
 
     let update_check = tokio::spawn(updater::check_for_updates());
-
-    let token = cli.token.clone().or_else(load_token);
 
     match cli.command {
         Commands::Health => health(&client, &cli.base_url).await?,
@@ -281,7 +339,6 @@ async fn main() -> Result<()> {
             requested_by,
             avatar_url,
         } => {
-            let saved = load_auth();
             let avatar = avatar_url.or_else(|| saved.as_ref().and_then(|a| a.avatar_url.clone()));
             let requested_by =
                 requested_by.or_else(|| saved.as_ref().and_then(|a| a.username.clone()));
@@ -303,7 +360,6 @@ async fn main() -> Result<()> {
             requested_by,
             avatar_url,
         } => {
-            let saved = load_auth();
             let avatar = avatar_url.or_else(|| saved.as_ref().and_then(|a| a.avatar_url.clone()));
             let requested_by =
                 requested_by.or_else(|| saved.as_ref().and_then(|a| a.username.clone()));
@@ -412,17 +468,7 @@ async fn main() -> Result<()> {
             };
             post_audio(&client, &cli.base_url, token.as_deref(), &payload).await?;
         }
-        Commands::Auth { command } => match command {
-            AuthSubcommand::Login => {
-                login(&cli.base_url).await?;
-            }
-            AuthSubcommand::Signout => {
-                signout(&client, &cli.base_url, token.as_deref()).await?;
-            }
-            AuthSubcommand::Info => {
-                auth_info()?;
-            }
-        },
+        Commands::Auth { .. } => unreachable!("auth commands handled before credential resolution"),
         Commands::Lyrics { guild_id, user_id } => {
             let payload = LyricsPayload {
                 action: "lyrics".to_string(),
@@ -576,14 +622,15 @@ async fn post_audio<T: serde::Serialize>(
         req = req.bearer_auth(bearer);
     }
     let resp = req.send().await.with_context(|| format!("POST {url}"))?;
-    print_response(resp).await
+    print_response(resp, token).await
 }
 
-async fn print_response(resp: reqwest::Response) -> Result<()> {
+async fn print_response(resp: reqwest::Response, token: Option<&str>) -> Result<()> {
     let status = resp.status();
-    let text = resp.text().await.context("reading response body")?;
+    let text = api::response_text(resp).await?;
 
-    if let Ok(json) = serde_json::from_str::<Value>(&text) {
+    if let Ok(mut json) = serde_json::from_str::<Value>(&text) {
+        output::scrub_json(&mut json, token);
         if let Some(summary) = summarize(&json) {
             println!("{}", summary);
         } else if !status.is_success() {
@@ -597,10 +644,10 @@ async fn print_response(resp: reqwest::Response) -> Result<()> {
         }
     } else if !status.is_success() {
         println!("{} Request failed ({})", "✘".red(), status);
-        println!("{}", text);
+        println!("{}", output::safe_text(&text, token));
     } else {
         println!("{} Success", "✔".green());
-        println!("{}", text);
+        println!("{}", output::safe_text(&text, token));
     }
 
     Ok(())
@@ -781,7 +828,8 @@ fn summarize(json: &Value) -> Option<String> {
                 let duration = np.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0);
 
                 let progress = if duration > 0 {
-                    let pct = (elapsed as f64 / duration as f64 * 20.0).round() as usize;
+                    let pct = ((elapsed as f64 / duration as f64).clamp(0.0, 1.0) * 20.0).round()
+                        as usize;
                     let bar = "━".repeat(pct) + "⚪" + &"━".repeat(20usize.saturating_sub(pct));
                     format!(
                         "[{}]
@@ -866,269 +914,93 @@ fn summarize(json: &Value) -> Option<String> {
     }
 }
 
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 async fn login(base_url: &str) -> Result<()> {
-    // Start a local listener so we can receive the issued bearer token
-    // via a callback redirect from the webhook server. If no callback is
-    // received within the timeout, fall back to the manual paste flow.
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .context("binding local listener; the legacy manual token-paste flow is deprecated. Please run `jorik auth login` on a device where your browser can redirect to http://127.0.0.1 so the CLI can automatically capture token, avatar and username")?;
-    let local_addr = listener.local_addr()?;
-    let callback_url = format!("http://{}/oauth-callback", local_addr);
-    println!(
-        "{} Local callback URL: {}",
-        "📬".yellow(),
-        callback_url.as_str().underline()
-    );
-
-    // Build authorize URL with callback parameter (the webhook server will
-    // embed this callback into the OAuth `state` so it can redirect back).
-    let mut auth_url =
-        Url::parse(&build_url(base_url, "/authorize")).context("parsing authorize URL")?;
-    auth_url
-        .query_pairs_mut()
-        .append_pair("callback", &callback_url);
-
-    println!("{} Opening browser for authorization...", "🔑".yellow());
-    println!("Link: {}", auth_url.as_str().underline());
-    let _ = that(auth_url.as_str());
-
-    // Wait for a single incoming connection (with timeout).
-    match timeout(Duration::from_secs(120), listener.accept()).await {
-        Ok(Ok((mut stream, _addr))) => {
-            // Read the request (headers should fit into this buffer for our simple case).
-            let mut buf = vec![0u8; 8192];
-            let n = stream.read(&mut buf).await?;
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let first_line = req.lines().next().unwrap_or("");
-            let path = first_line.split_whitespace().nth(1).unwrap_or("");
-            // Prepend a scheme+host so `Url::parse` can parse query params.
-            if let Ok(parsed) = Url::parse(&format!("http://localhost{}", path)) {
-                let token_pair = parsed.query_pairs().find(|(k, _)| k == "token");
-                let avatar_pair = parsed.query_pairs().find(|(k, _)| k == "avatar");
-                let username_pair = parsed.query_pairs().find(|(k, _)| k == "username");
-                if let Some((_k, v)) = token_pair {
-                    let token = v.into_owned();
-                    let token_trim = token.trim();
-                    if token_trim.is_empty() {
-                        let body = "Missing token";
-                        let resp = format!(
-                            "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
-                            body.len(),
-                            body
-                        );
-                        stream.write_all(resp.as_bytes()).await.ok();
-                        bail!("No token provided");
-                    }
-
-                    let avatar_val = avatar_pair.map(|(_, val)| val.into_owned());
-                    let username_val = username_pair.map(|(_, val)| val.into_owned());
-                    save_token(token_trim, avatar_val.as_deref(), username_val.as_deref())?;
-
-                    // Build a small, readable success page and kick off confetti animation.
-                    let escaped_username = username_val
-                        .as_deref()
-                        .map(escape_html)
-                        .unwrap_or_else(|| "User".to_string());
-                    let escaped_avatar = avatar_val.as_deref().map(escape_html);
-                    let saved_path_html = if let Some(path) = config_file_path() {
-                        format!(
-                            "<p>Saved to <code>{}</code></p>",
-                            escape_html(&path.display().to_string())
-                        )
-                    } else {
-                        "".to_string()
-                    };
-
-                    let mut body = String::new();
-                    body.push_str(
-                        r##"<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Authorization complete</title><style>"##,
-                    );
-                    body.push_str(r##"body{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial, sans-serif;background:#2f3136;color:#dcddde;margin:0;padding:0;display:flex;align-items:center;justify-content:center;height:100vh}"##);
-                    body.push_str(r##".container{max-width:560px;width:100%;padding:28px;background:#36393f;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.6)}"##);
-                    body.push_str(
-                        r##".header{display:flex;align-items:center;gap:16px;margin-bottom:18px}"##,
-                    );
-                    body.push_str(r##".badge{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:#2f3136}"##);
-                    body.push_str(r##".check{width:34px;height:34px;border-radius:50%;background:#43b581;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}"##);
-                    body.push_str(r##".avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid rgba(0,0,0,0.4)}"##);
-                    body.push_str(r##".user{font-size:16px;font-weight:600;margin:0;color:#fff}"##);
-                    body.push_str(r##".sp{color:#b9bbbe;font-size:13px;margin-top:4px}"##);
-                    body.push_str(r##".path{display:inline-block;background:#2f3136;padding:6px 8px;border-radius:6px;color:#b9bbbe;font-family:monospace;margin-top:8px}"##);
-                    body.push_str(
-                        r##"</style></head><body><div class=\"container\"><div class=\"header\">"##,
-                    );
-                    if let Some(avatar) = &escaped_avatar {
-                        body.push_str(&format!(
-                            r##"<img class=\"avatar\" src=\"{}\" alt=\"avatar"##,
-                            avatar
-                        ));
-                    } else {
-                        body.push_str(
-                            r##"<div class=\"badge\"><div class=\"check\">✓</div></div>"##,
-                        );
-                    }
-                    body.push_str(&format!(
-                        r##"<div><div class=\"user\">{}</div><div class=\"sp\">Authorization complete</div>{}"##,
-                        escaped_username,
-                        saved_path_html
-                    ));
-                    body.push_str(r##"</div><div><p class=\"sp\">Token saved to your config. You may close this window.</p></div>"##);
-
-                    // confetti
-                    body.push_str(r##"<script src=\"https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js\"></script>"##);
-                    body.push_str(
-                        r##"<script>
-  const duration = 15 * 1000,
-    animationEnd = Date.now() + duration,
-    defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
-
-  function randomInRange(min, max) {
-    return Math.random() * (max - min) + min;
-  }
-
-  const interval = setInterval(function() {
-    const timeLeft = animationEnd - Date.now();
-
-    if (timeLeft <= 0) {
-      return clearInterval(interval);
-    }
-
-    const particleCount = 50 * (timeLeft / duration);
-
-    confetti(
-      Object.assign({}, defaults, {
-        particleCount,
-        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
-      })
-    );
-    confetti(
-      Object.assign({}, defaults, {
-        particleCount,
-        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
-      })
-    );
-  }, 250);
-</script>"##,
-                    );
-                    body.push_str("</div></body></html>");
-
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
-                        body
-                    );
-                    stream.write_all(resp.as_bytes()).await.ok();
-                    stream.shutdown().await.ok();
-
-                    if let Some(path) = config_file_path() {
-                        println!("{} Token saved to {}", "✔".green(), path.display());
-                    }
-                    return Ok(());
-                }
-            }
-
-            // If we reached here, callback didn't include a token. Respond with 400 and return OK.
-            let body = "No token in callback";
-            let resp = format!(
-                "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(resp.as_bytes()).await.ok();
-            Ok(())
+    credentials::check_available(base_url).await?;
+    let session = auth::LoginSession::bind(base_url).await?;
+    println!("Open this link to log in:\n{}", session.authorization_url());
+    let link = session.authorization_url().to_string();
+    tokio::task::spawn_blocking(move || {
+        if open::that(link).is_err() {
+            eprintln!("Could not open a browser automatically; use the link above.");
         }
-        _ => {
-            bail!(
-                "No callback received within timeout (120s). The legacy manual token-paste flow is deprecated. Please run `jorik auth login` and complete the authorization in your browser so the CLI can automatically capture token, avatar and username."
-            );
+    });
+    let cancel = CancellationToken::new();
+    let work_cancel = cancel.clone();
+    let work = async {
+        let pending = session.wait(&work_cancel).await?;
+        if let Err(error) =
+            credentials::save(base_url, pending.auth.clone(), work_cancel.clone()).await
+        {
+            let _ = pending.respond(false).await;
+            return Err(error);
         }
+        let _ = pending.respond(true).await;
+        println!("Logged in. Credentials saved in the OS credential store for {base_url}.");
+        Ok(())
+    };
+    tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            cancel.cancel();
+            bail!("login cancelled");
+        }
+        result = work => result,
     }
 }
 
-fn auth_info() -> Result<()> {
-    if let Some(auth) = load_auth() {
-        if let Some(path) = config_file_path() {
-            println!("{} Auth file: {}", "ℹ️".blue(), path.display());
-        }
+async fn migrate_auth(confirmed_server: &str) -> Result<()> {
+    let server = credentials::server_identity(confirmed_server)?;
+    let cancel = CancellationToken::new();
+    let work = credentials::migrate(&server, cancel.clone());
+    let migrated = tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => { cancel.cancel(); bail!("migration cancelled"); }
+        result = work => result?,
+    };
+    if migrated.is_some() {
         println!(
-            "{} User: {}",
-            "👤".cyan(),
-            auth.username
-                .clone()
-                .unwrap_or_else(|| "Unknown".to_string())
+            "Legacy credentials migrated to the OS store for {server}; plaintext files removed."
         );
-        if let Some(avatar) = auth.avatar_url {
-            println!("{} Avatar: {}", "🖼️".cyan(), avatar);
-        } else {
-            println!("{} Avatar: (none)", "🖼️".cyan());
-        }
-
-        let masked = "[redacted]";
-        println!("{} Token: {}", "🔑".cyan(), masked);
-        Ok(())
     } else {
-        println!(
-            "{} Not authenticated. Run `jorik auth login` to authenticate.",
-            "ℹ️".blue()
-        );
-        Ok(())
+        println!("No supported legacy auth.json found. Use `auth login` to authenticate.");
     }
+    Ok(())
 }
 
-async fn signout(client: &Client, base_url: &str, token: Option<&str>) -> Result<()> {
-    // If token present, attempt to revoke it on the server first.
-    if let Some(tok) = token {
-        println!("{} Revoking token on server...", "🔒".yellow());
-        let url = build_url(base_url, "/webhook/auth/revoke");
-        match client.post(&url).bearer_auth(tok).send().await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    match resp.json::<serde_json::Value>().await {
-                        Ok(json) => {
-                            let revoked = json
-                                .get("revoked")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            if revoked {
-                                println!("{} Server revoked token", "✔".green());
-                            } else {
-                                println!("{} Server did not revoke token", "ℹ️".blue());
-                            }
-                        }
-                        Err(e) => {
-                            println!("{} Failed to parse server response: {}", "✘".red(), e);
-                        }
-                    }
-                } else {
-                    println!("{} Server returned status {}", "✘".red(), resp.status());
-                }
-            }
-            Err(e) => {
-                println!(
-                    "{} Failed to contact server to revoke token: {}",
-                    "✘".red(),
-                    e
+async fn auth_info(base_url: &str) -> Result<()> {
+    if let Some(auth) = credentials::load(base_url).await? {
+        println!(
+            "Server: {base_url}\nStorage: OS credential store\nUser: {}\nToken: [redacted]",
+            auth.username.as_deref().unwrap_or("Unknown")
+        );
+    } else {
+        println!("Not authenticated for {base_url}. Run `jorik auth login`.");
+    }
+    Ok(())
+}
+
+async fn signout(client: &Client, base_url: &str, override_token: Option<&str>) -> Result<()> {
+    let saved = if override_token.is_none() {
+        match credentials::load(base_url).await {
+            Ok(saved) => saved,
+            Err(_) => {
+                eprintln!(
+                    "Could not read saved credentials; local removal will still be attempted."
                 );
+                None
             }
         }
     } else {
-        println!("{} No token present; skipping server revoke", "ℹ️".blue());
+        None
+    };
+    let token = override_token.or_else(|| saved.as_ref().map(|auth| auth.token.as_str()));
+    let removed = credentials::delete(base_url).await;
+    match auth::revoke(client, base_url, token).await {
+        Ok(true) => println!("Remote token revoked."),
+        Ok(false) => eprintln!("Remote revocation was not confirmed."),
+        Err(error) => eprintln!("{error}"),
     }
-
-    // Remove local auth file regardless of remote result
-    let path = config_file_path().context("cannot determine config path")?;
-    if path.exists() {
-        fs::remove_file(&path).context("removing auth file")?;
-        println!("{} Signed out and removed {}", "✔".green(), path.display());
-    } else {
-        println!("{} No auth found", "ℹ️".blue());
-    }
+    removed?;
+    println!("Signed out locally for {base_url}.");
     Ok(())
 }

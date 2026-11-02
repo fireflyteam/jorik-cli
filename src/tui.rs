@@ -24,21 +24,29 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+#[cfg(test)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(test)]
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tokio::time::{interval, timeout};
+use tokio::time::interval;
+#[cfg(test)]
+use tokio::time::timeout;
 use tokio_tungstenite::{
-    connect_async,
+    connect_async_with_config,
+    tungstenite::protocol::WebSocketConfig,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, protocol::Message},
 };
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 mod actions;
+mod authentication;
 mod chrome;
 mod player;
 
 use actions::{Action, execute as execute_action, handle_clear_keys, handle_palette_keys};
+use authentication::{show_auth_info, start_login, start_signout, switch_server};
 use chrome::{
     popup_rect, render_clear_confirmation, render_footer, render_header, render_help,
     render_palette,
@@ -190,6 +198,10 @@ struct App {
     lyrics_scroll: u16,
 
     auth_info_text: Option<String>,
+    login_cancel: Option<CancellationToken>,
+    login_generation: u64,
+    signing_out: bool,
+    signout_task: Option<tokio::task::JoinHandle<()>>,
 
     // Real-time data
     spectrogram: Option<Vec<Vec<u8>>>,
@@ -288,6 +300,10 @@ impl App {
             lyrics_text: None,
             lyrics_scroll: 0,
             auth_info_text: None,
+            login_cancel: None,
+            login_generation: 0,
+            signing_out: false,
+            signout_task: None,
             spectrogram: None,
             elapsed_ms: 0,
             duration_ms: 0,
@@ -314,6 +330,38 @@ impl App {
             next_command_id: 0,
             smoothed_bars: vec![0.0; 64],
         }
+    }
+
+    fn cancel_login(&mut self) {
+        if let Some(cancel) = self.login_cancel.take() {
+            cancel.cancel();
+            self.login_generation += 1;
+            self.is_loading = false;
+            self.auth_info_text = Some("Login cancelled.".to_string());
+        }
+    }
+
+    fn clear_session(&mut self) {
+        self.token = None;
+        self.guild_id = None;
+        self.user_id = None;
+        self.queue.clear();
+        self.queue_state.select(None);
+        self.current_track = None;
+        self.spectrogram = None;
+        self.smoothed_bars.fill(0.0);
+        self.elapsed_ms = 0;
+        self.duration_ms = 0;
+        self.has_playback_state = false;
+        self.paused = true;
+        self.fatal_error = None;
+        self.queue_error = None;
+        self.auth_info_text = None;
+        self.is_loading = false;
+        self.debug_logs.clear();
+        self.disconnect_ws();
+        self.error_message = None;
+        self.needs_reconnect = true;
     }
 
     fn clamp_queue_selection(&mut self) {
@@ -440,10 +488,11 @@ impl App {
 
     fn log(&mut self, msg: impl Into<String>) {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        let mut message = msg.into();
-        if let Some(token) = self.token.as_ref().filter(|token| !token.is_empty()) {
-            message = message.replace(token, "[redacted]");
-        }
+        let message = crate::output::safe_text(&msg.into(), self.token.as_deref())
+            .replace(['\n', '\r'], " ")
+            .chars()
+            .take(2048)
+            .collect::<String>();
         self.debug_logs.push(format!("[{}] {}", timestamp, message));
         if self.debug_logs.len() > 100 {
             self.debug_logs.remove(0);
@@ -526,7 +575,10 @@ impl App {
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown");
             let author = current.get("author").and_then(|v| v.as_str()).unwrap_or("");
-            self.current_track = Some(format!("{} - {}", title, author));
+            self.current_track = Some(crate::output::safe_text(
+                &format!("{} - {}", title, author),
+                self.token.as_deref(),
+            ));
         } else {
             // Only clear current_track if we are sure we are looking at a queue object
             if target.get("current").is_some() || target.get("upcoming").is_some() {
@@ -542,7 +594,10 @@ impl App {
                     .and_then(|v| v.as_str())
                     .unwrap_or("Unknown");
                 let author = item.get("author").and_then(|v| v.as_str()).unwrap_or("");
-                self.queue.push(format!("{} - {}", title, author));
+                self.queue.push(crate::output::safe_text(
+                    &format!("{} - {}", title, author),
+                    self.token.as_deref(),
+                ));
             }
         }
         self.clamp_queue_selection();
@@ -582,7 +637,7 @@ impl App {
         if self.current_track.is_some() && !self.paused {
             let now = Instant::now();
             let delta = now.duration_since(self.last_state_update).as_millis() as u64;
-            self.elapsed_ms += delta;
+            self.elapsed_ms = self.elapsed_ms.saturating_add(delta);
             self.last_state_update = now;
 
             if self.duration_ms > 0 && self.elapsed_ms > self.duration_ms {
@@ -640,7 +695,9 @@ async fn checked_request(
         return Ok(response);
     }
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let body = crate::api::response_text(response)
+        .await
+        .map_err(|error| error.to_string())?;
     Err(format!(
         "HTTP {status}: {}",
         body.chars().take(512).collect::<String>()
@@ -648,16 +705,19 @@ async fn checked_request(
 }
 
 async fn request_json(req: reqwest::RequestBuilder) -> std::result::Result<Value, String> {
-    checked_request(req)
-        .await?
-        .json::<Value>()
+    let response = checked_request(req).await?;
+    let body = crate::api::response_text(response)
         .await
-        .map_err(|error| format!("Invalid server response: {}", error.without_url()))
+        .map_err(|error| error.to_string())?;
+    serde_json::from_str(&body).map_err(|_| "Invalid server response: malformed JSON".to_string())
 }
 
 async fn async_fetch_queue(app_arc: Arc<Mutex<App>>) {
     let (client, base_url, token, payload) = {
         let mut app = app_arc.lock().await;
+        if app.token.is_none() {
+            return;
+        }
         app.is_loading = true;
         let payload = QueuePayload {
             action: "queue",
@@ -727,6 +787,10 @@ async fn async_play_track(app_arc: Arc<Mutex<App>>, query: String) {
 async fn async_fetch_lyrics(app_arc: Arc<Mutex<App>>) {
     let (client, base_url, token, payload) = {
         let mut app = app_arc.lock().await;
+        if app.token.is_none() {
+            app.lyrics_text = Some("Log in to this server first.".to_string());
+            return;
+        }
         app.is_loading = true;
         let payload = LyricsPayload {
             action: "lyrics".to_string(),
@@ -757,7 +821,7 @@ async fn async_fetch_lyrics(app_arc: Arc<Mutex<App>>) {
     }
     app.lyrics_scroll = 0;
     app.is_loading = false;
-    app.lyrics_text = Some(match result {
+    let lyrics = match result {
         Ok(json) => {
             let data = &json["data"];
             let text = if let Some(text) = data["text"].as_str() {
@@ -778,7 +842,8 @@ async fn async_fetch_lyrics(app_arc: Arc<Mutex<App>>) {
             }
         }
         Err(error) => format!("Failed to fetch lyrics: {error}"),
-    });
+    };
+    app.lyrics_text = Some(crate::output::safe_text(&lyrics, app.token.as_deref()));
 }
 
 async fn async_simple_command<T: serde::Serialize + Send + Sync + 'static>(
@@ -788,6 +853,10 @@ async fn async_simple_command<T: serde::Serialize + Send + Sync + 'static>(
 ) {
     let (client, base_url, token) = {
         let mut app = app_arc.lock().await;
+        if app.token.is_none() {
+            app.error_message = Some("Log in to this server first.".to_string());
+            return;
+        }
         app.error_message = None;
         if endpoint == "/webhook/audio" && app.send_ws_action(&payload) {
             return;
@@ -817,293 +886,29 @@ async fn async_simple_command<T: serde::Serialize + Send + Sync + 'static>(
     async_fetch_queue(app_arc).await;
 }
 
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+fn websocket_url(base: &str) -> Result<Url> {
+    let server = crate::credentials::server_identity(base)?;
+    let mut url = Url::parse(&api::build_url(&server, "/ws"))?;
+    let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
+    url.set_scheme(scheme)
+        .map_err(|_| anyhow::anyhow!("invalid WebSocket URL"))?;
+    Ok(url)
 }
 
-async fn async_auth_login(app_arc: Arc<Mutex<App>>) {
-    let (base_url, is_login_required_screen) = {
-        let mut app = app_arc.lock().await;
-        app.is_loading = true;
-        app.auth_info_text = Some("Initializing login...".to_string());
-
-        let is_login_required = app.view == View::LoginRequired;
-
-        // If we are NOT on the LoginRequired screen (meaning we are in the Auth Menu),
-        // switch to AuthResult to show the popup.
-        // If we ARE on LoginRequired, we do NOTHING to the view, staying on that screen.
-        if !is_login_required {
-            app.view = View::AuthResult;
-        }
-
-        (app.base_url.clone(), is_login_required)
-    };
-
-    let listener = match TcpListener::bind(("127.0.0.1", 0)).await {
-        Ok(l) => l,
-        Err(e) => {
-            let mut app = app_arc.lock().await;
-            app.is_loading = false;
-            app.auth_info_text = Some(format!("Failed to bind listener: {}", e));
-            return;
-        }
-    };
-
-    let local_addr = match listener.local_addr() {
-        Ok(a) => a,
-        Err(e) => {
-            let mut app = app_arc.lock().await;
-            app.is_loading = false;
-            app.auth_info_text = Some(format!("Failed to get local addr: {}", e));
-            return;
-        }
-    };
-
-    let callback_url = format!("http://{}/oauth-callback", local_addr);
-
-    let mut auth_url = match reqwest::Url::parse(&api::build_url(&base_url, "/authorize")) {
-        Ok(u) => u,
-        Err(e) => {
-            let mut app = app_arc.lock().await;
-            app.is_loading = false;
-            app.auth_info_text = Some(format!("Invalid base URL: {}", e));
-            return;
-        }
-    };
-
-    auth_url
-        .query_pairs_mut()
-        .append_pair("callback", &callback_url);
-
-    {
-        let mut app = app_arc.lock().await;
-        app.auth_info_text = Some(format!(
-            "Opening browser...\n\nIf it doesn't open, visit:\n{}",
-            auth_url.as_str()
-        ));
-    }
-
-    let _ = open::that(auth_url.as_str());
-
-    // Wait for callback (120s timeout)
-    match timeout(Duration::from_secs(120), listener.accept()).await {
-        Ok(Ok((mut stream, _addr))) => {
-            let mut buf = vec![0u8; 8192];
-            let n = match stream.read(&mut buf).await {
-                Ok(n) => n,
-                Err(e) => {
-                    let mut app = app_arc.lock().await;
-                    app.is_loading = false;
-                    app.auth_info_text = Some(format!("Error reading callback: {}", e));
-                    return;
-                }
-            };
-
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let first_line = req.lines().next().unwrap_or("");
-            let path = first_line.split_whitespace().nth(1).unwrap_or("");
-
-            // Prepend a scheme+host so `Url::parse` can parse query params.
-            if let Ok(parsed) = reqwest::Url::parse(&format!("http://localhost{}", path)) {
-                let token_pair = parsed.query_pairs().find(|(k, _)| k == "token");
-                let avatar_pair = parsed.query_pairs().find(|(k, _)| k == "avatar");
-                let username_pair = parsed.query_pairs().find(|(k, _)| k == "username");
-
-                if let Some((_, v)) = token_pair {
-                    let token = v.into_owned();
-                    let token_trim = token.trim().to_string();
-                    if token_trim.is_empty() {
-                        let body = "Missing token";
-                        let resp = format!(
-                            "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
-                            body.len(),
-                            body
-                        );
-                        let _ = stream.write_all(resp.as_bytes()).await;
-
-                        let mut app = app_arc.lock().await;
-                        app.is_loading = false;
-                        app.auth_info_text = Some("No token provided in callback.".to_string());
-                        return;
-                    }
-
-                    let avatar_val = avatar_pair.map(|(_, val)| val.into_owned());
-                    let username_val = username_pair.map(|(_, val)| val.into_owned());
-
-                    if let Err(e) =
-                        api::save_token(&token_trim, avatar_val.as_deref(), username_val.as_deref())
-                    {
-                        let mut app = app_arc.lock().await;
-                        app.is_loading = false;
-                        app.auth_info_text = Some(format!("Failed to save token: {}", e));
-                        return;
-                    }
-
-                    // Build a small, readable success page and kick off confetti animation.
-                    let escaped_username = username_val
-                        .as_deref()
-                        .map(escape_html)
-                        .unwrap_or_else(|| "User".to_string());
-                    let escaped_avatar = avatar_val.as_deref().map(escape_html);
-                    let saved_path_html = if let Some(path) = api::config_file_path() {
-                        format!(
-                            "<p>Saved to <code>{}</code></p>",
-                            escape_html(&path.display().to_string())
-                        )
-                    } else {
-                        "".to_string()
-                    };
-
-                    let mut body = String::new();
-                    body.push_str(
-                        "<!doctype html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><title>Authorization complete</title><style>",
-                    );
-                    body.push_str("body{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial, sans-serif;background:#2f3136;color:#dcddde;margin:0;padding:0;display:flex;align-items:center;justify-content:center;height:100vh}");
-                    body.push_str(".container{max-width:560px;width:100%;padding:28px;background:#36393f;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.6)}");
-                    body.push_str(
-                        ".header{display:flex;align-items:center;gap:16px;margin-bottom:18px}",
-                    );
-                    body.push_str(".badge{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:#2f3136}");
-                    body.push_str(".check{width:34px;height:34px;border-radius:50%;background:#43b581;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}");
-                    body.push_str(".avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid rgba(0,0,0,0.4)}");
-                    body.push_str(".user{font-size:16px;font-weight:600;margin:0;color:#fff}");
-                    body.push_str(".sp{color:#b9bbbe;font-size:13px;margin-top:4px}");
-                    body.push_str(".path{display:inline-block;background:#2f3136;padding:6px 8px;border-radius:6px;color:#b9bbbe;font-family:monospace;margin-top:8px}");
-                    body.push_str(
-                        "</style></head><body><div class=\"container\"><div class=\"header\">",
-                    );
-                    if let Some(avatar) = &escaped_avatar {
-                        body.push_str(&format!(
-                            r#"<img class="avatar" src="{}" alt="avatar"/>"#,
-                            avatar
-                        ));
-                    } else {
-                        body.push_str(r#"<div class="badge"><div class="check">✓</div></div>"#);
-                    }
-                    body.push_str(&format!(
-                        r#"<div><div class="user">{}</div><div class="sp">Authorization complete</div>{}</div>"#,
-                        escaped_username, saved_path_html
-                    ));
-                    body.push_str(r#"</div><div><p class="sp">Token saved to your config. You may close this window.</p></div>"#);
-
-                    // confetti
-                    body.push_str(r#"<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>"#);
-                    body.push_str(
-                        r#"<script>
-  const duration = 15 * 1000,
-    animationEnd = Date.now() + duration,
-    defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
-
-  function randomInRange(min, max) {
-    return Math.random() * (max - min) + min;
-  }
-
-  const interval = setInterval(function() {
-    const timeLeft = animationEnd - Date.now();
-
-    if (timeLeft <= 0) {
-      return clearInterval(interval);
-    }
-
-    const particleCount = 50 * (timeLeft / duration);
-
-    confetti(
-      Object.assign({}, defaults, {
-        particleCount,
-        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
-      })
-    );
-    confetti(
-      Object.assign({}, defaults, {
-        particleCount,
-        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
-      })
-    );
-  }, 250);
-</script>"#,
-                    );
-                    body.push_str("</div></body></html>");
-
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(resp.as_bytes()).await;
-                    let _ = stream.shutdown().await;
-
-                    {
-                        let mut app = app_arc.lock().await;
-                        app.is_loading = false;
-                        app.token = Some(token_trim.clone());
-                        app.auth_info_text = Some(format!(
-                            "Login Successful!\n\nUser: {}\nToken saved.",
-                            username_val.unwrap_or_default()
-                        ));
-                    }
-
-                    // Small delay to ensure stability
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-
-                    // Refresh data before switching view
-                    async_fetch_queue(app_arc.clone()).await;
-
-                    let mut app = app_arc.lock().await;
-                    // Only transition to Main if we were on the LoginRequired screen.
-                    if is_login_required_screen {
-                        app.view = View::Main;
-                    }
-                } else {
-                    let body = "No token in callback";
-                    let resp = format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(resp.as_bytes()).await;
-
-                    let mut app = app_arc.lock().await;
-                    app.is_loading = false;
-                    app.auth_info_text =
-                        Some("Login failed: Missing token in callback.".to_string());
-                }
-            }
-        }
-        _ => {
-            let mut app = app_arc.lock().await;
-            app.is_loading = false;
-            app.auth_info_text = Some("Login timed out.".to_string());
-        }
-    }
-}
-
-async fn async_auth_signout(app_arc: Arc<Mutex<App>>) {
-    let (client, base_url, token) = {
-        let mut app = app_arc.lock().await;
-        app.is_loading = true;
-        app.view = View::AuthResult;
-        app.auth_info_text = Some("Signing out...".to_string());
-        (app.client.clone(), app.base_url.clone(), app.token.clone())
-    };
-
-    if let Some(tok) = token {
-        let url = api::build_url(&base_url, "/webhook/auth/revoke");
-        let _ = client.post(&url).bearer_auth(tok).send().await;
-    }
-
-    // Remove local file
-    if let Some(path) = api::config_file_path() {
-        let _ = std::fs::remove_file(path);
-    }
-
-    let mut app = app_arc.lock().await;
-    app.is_loading = false;
-    app.token = None;
-    app.auth_info_text = None;
-    app.view = View::LoginRequired;
+fn websocket_request(
+    base: &str,
+    token: &str,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
+    crate::credentials::validate_token(token)?;
+    let mut request = websocket_url(base)?.as_str().into_client_request()?;
+    let headers = request.headers_mut();
+    headers.insert("User-Agent", HeaderValue::from_static("jorik-cli"));
+    let origin = Url::parse(base)?.origin().ascii_serialization();
+    headers.insert("Origin", HeaderValue::from_str(&origin)?);
+    let mut bearer = HeaderValue::from_str(&format!("Bearer {token}"))?;
+    bearer.set_sensitive(true);
+    headers.insert("Authorization", bearer);
+    Ok(request)
 }
 
 async fn spawn_websocket(
@@ -1141,18 +946,11 @@ async fn spawn_websocket(
         let token = token.unwrap();
         let guild_id = guild_id.unwrap();
 
-        let ws_url = match Url::parse(&base_url) {
-            Ok(u) => {
-                let scheme = if u.scheme() == "https" { "wss" } else { "ws" };
-                let mut u = u;
-                u.set_scheme(scheme).ok();
-                u.set_path("/ws");
-                u.query_pairs_mut().append_pair("token", &token);
-                u
-            }
-            Err(e) => {
+        let ws_url = match websocket_url(&base_url) {
+            Ok(url) => url,
+            Err(_) => {
                 let mut app = app_arc.lock().await;
-                app.log(format!("WS URL Parse Error: {}", e));
+                app.log("Invalid or insecure WebSocket server URL");
                 drop(app);
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
@@ -1166,32 +964,21 @@ async fn spawn_websocket(
             app.ws_connecting = true;
         }
 
-        let request = match ws_url.as_str().into_client_request() {
-            Ok(mut req) => {
-                let headers = req.headers_mut();
-                headers.insert("User-Agent", HeaderValue::from_static("jorik-cli"));
-                headers.insert(
-                    "Origin",
-                    HeaderValue::from_str(&base_url)
-                        .unwrap_or_else(|_| HeaderValue::from_static("jorik-cli")),
-                );
-                headers.insert(
-                    "Authorization",
-                    HeaderValue::from_str(&format!("Bearer {}", token))
-                        .unwrap_or_else(|_| HeaderValue::from_static("")),
-                );
-                req
-            }
-            Err(e) => {
+        let request = match websocket_request(&base_url, &token) {
+            Ok(request) => request,
+            Err(_) => {
                 let mut app = app_arc.lock().await;
-                app.log(format!("WS Request Error: {}", e));
+                app.log("Could not build authenticated WebSocket request");
                 drop(app);
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
             }
         };
 
-        match connect_async(request).await {
+        let websocket_limits = WebSocketConfig::default()
+            .max_message_size(Some(4 * 1024 * 1024))
+            .max_frame_size(Some(4 * 1024 * 1024));
+        match connect_async_with_config(request, Some(websocket_limits), false).await {
             Ok((mut ws_stream, _)) => {
                 {
                     let mut app = app_arc.lock().await;
@@ -1299,6 +1086,12 @@ async fn spawn_websocket(
                             }
                         }
                         Some(out_msg) = ws_rx.recv() => {
+                            {
+                                let app = app_arc.lock().await;
+                                if app.base_url != base_url || app.token.as_deref() != Some(token.as_str()) {
+                                    break;
+                                }
+                            }
                             if let Err(e) = ws_stream.send(out_msg).await {
                                 let mut app = app_arc.lock().await;
                                 app.log(format!("WS Send Error: {}", e));
@@ -1346,13 +1139,17 @@ pub async fn run(
 ) -> Result<Option<(String, Vec<api::GiteaAsset>)>> {
     let client = Client::builder()
         .user_agent("jorik-cli-tui")
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(10))
         .build()?;
 
-    api::validate_base_url(&settings.base_url)?;
+    crate::credentials::server_identity(&settings.base_url)?;
     let (ws_tx, ws_rx) = tokio::sync::mpsc::channel::<Message>(32);
 
     let mut app_struct = App::new(client.clone(), settings, token, guild_id, user_id);
+    if crate::credentials::legacy_present() {
+        app_struct.auth_info_text = Some("Legacy plaintext credentials are not reused. Run `auth migrate --confirm-server URL` or `auth clear-legacy --confirm`, or start a fresh login.".to_string());
+    }
     app_struct.ws_sender = Some(ws_tx);
 
     let app = Arc::new(Mutex::new(app_struct));
@@ -1383,11 +1180,24 @@ pub async fn run(
     let mut terminal = ratatui::init();
     let paste_enabled =
         ratatui::crossterm::execute!(std::io::stdout(), event::EnableBracketedPaste).is_ok();
-    let res = run_loop(&mut terminal, app).await;
+    let res = run_loop(&mut terminal, app.clone()).await;
+    let signout = {
+        let mut app = app.lock().await;
+        app.cancel_login();
+        app.signout_task.take()
+    };
     if paste_enabled {
         let _ = ratatui::crossterm::execute!(std::io::stdout(), event::DisableBracketedPaste);
     }
     ratatui::restore();
+    if let Some(signout) = signout {
+        if !signout.is_finished() {
+            eprintln!("Finishing sign-out…");
+        }
+        signout
+            .await
+            .map_err(|_| anyhow::anyhow!("sign-out cleanup task failed"))?;
+    }
     res
 }
 
@@ -1437,7 +1247,12 @@ async fn run_loop(
 
 fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>>) -> UiOutcome {
     if should_quit(app, key) {
+        app.cancel_login();
         return UiOutcome::Quit;
+    }
+    if app.login_cancel.is_some() && key.code == KeyCode::Esc {
+        app.cancel_login();
+        return UiOutcome::Continue;
     }
     if app.fatal_error.is_some() {
         if matches!(key.code, KeyCode::Char('r' | 'к')) {
@@ -1525,6 +1340,9 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>
             _ => {}
         }
     }
+    if matches!(key.code, KeyCode::Char('1' | '2' | '3' | '4')) {
+        app.cancel_login();
+    }
     match key.code {
         KeyCode::Char('1') => {
             app.view = View::Main;
@@ -1566,9 +1384,10 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>
         }
         View::LoginRequired => match key.code {
             KeyCode::Enter => {
-                tokio::spawn(async_auth_login(app_arc));
+                start_login(app, app_arc);
             }
             KeyCode::Char('\\') => {
+                app.cancel_login();
                 app.settings_input = app.base_url.clone();
                 app.view = View::Settings;
             }
@@ -1766,13 +1585,15 @@ fn handle_settings_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<
                     return;
                 }
                 app.is_settings_editing = false;
-                let host_changed = app.base_url != app.settings_input;
-                app.base_url = app.settings_input.clone();
+                let canonical = crate::credentials::server_identity(&app.settings_input)
+                    .expect("validated server URL");
+                let host_changed = app.base_url != canonical;
+                app.base_url = canonical.clone();
+                app.settings_input = canonical;
                 app.visualizer_offset =
                     app.offset_input.parse().expect("validated settings offset");
                 if host_changed {
-                    app.needs_reconnect = true;
-                    tokio::spawn(async_fetch_queue(app_arc));
+                    switch_server(app, app_arc);
                 }
             }
             KeyCode::Esc => {
@@ -1923,13 +1744,13 @@ fn handle_settings_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<
 }
 
 fn draft_settings(app: &App) -> Result<api::Settings> {
-    api::validate_base_url(&app.settings_input)?;
+    let base_url = crate::credentials::server_identity(&app.settings_input)?;
     let visualizer_offset = app
         .offset_input
         .parse::<i64>()
         .map_err(|_| anyhow::anyhow!("visualizer offset must be a valid integer"))?;
     Ok(api::Settings {
-        base_url: app.settings_input.clone(),
+        base_url,
         visualizer_offset,
         theme: app.theme.clone(),
         visualizer_style: app.viz_style.clone(),
@@ -2055,34 +1876,9 @@ fn handle_auth_menu_keys(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex
         KeyCode::Enter => {
             if let Some(idx) = app.auth_menu_state.selected() {
                 match app.auth_menu_items[idx] {
-                    "Login" => {
-                        tokio::spawn(async_auth_login(app_arc));
-                    }
-                    "Signout" => {
-                        tokio::spawn(async_auth_signout(app_arc));
-                    }
-                    "Info" => {
-                        if let Some(auth) = api::load_auth() {
-                            let mut info = String::new();
-                            if let Some(path) = api::config_file_path() {
-                                info.push_str(&format!("Auth file: {}\n", path.display()));
-                            }
-                            info.push_str(&format!(
-                                "User: {}\n",
-                                auth.username.unwrap_or_else(|| "Unknown".to_string())
-                            ));
-                            if let Some(avatar) = auth.avatar_url {
-                                info.push_str(&format!("Avatar: {}\n", avatar));
-                            }
-                            let token_masked = "[redacted]";
-                            info.push_str(&format!("Token: {}", token_masked));
-                            app.auth_info_text = Some(info);
-                            app.view = View::AuthResult;
-                        } else {
-                            app.auth_info_text = Some("Not authenticated. Run Login.".to_string());
-                            app.view = View::AuthResult;
-                        }
-                    }
+                    "Login" => start_login(app, app_arc),
+                    "Signout" => start_signout(app, app_arc),
+                    "Info" => show_auth_info(app, app_arc),
                     _ => {}
                 }
             }
@@ -2706,6 +2502,8 @@ fn ui(f: &mut Frame, app: &mut App) {
 
 #[cfg(test)]
 mod refinement_tests;
+#[cfg(test)]
+mod security_tests;
 #[cfg(test)]
 #[path = "tui_tests.rs"]
 mod tests;
