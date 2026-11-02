@@ -1,0 +1,22 @@
+
+
+  ╭ Older login options ─────────────────────────────────────────────────────╮
+  │ Sign in again (recommended)                                              │
+  │ Press Esc, then Enter for a fresh Discord login.                         │
+  │ Your old files are left untouched.                                       │
+  │                                                                          │
+  │ Keep an existing login                                                   │
+  │ Run in a separate terminal:                                              │
+  │ jorik auth migrate --confirm-server SERVER_URL                           │
+  │ Replace SERVER_URL with the original issuing server.                     │
+  │ Do not infer the issuer from the currently selected server.              │
+  │                                                                          │
+  │ Remove old login files                                                   │
+  │ jorik auth clear-legacy --confirm                                        │
+  │ Permanent deletion; this does not revoke the token remotely.             │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │  ↑↓  scroll   Esc  back                                                  │
+  │                                                                          │
+  ╰──────────────────────────────────────────────────────────────────────────╯

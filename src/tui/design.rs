@@ -65,11 +65,15 @@ pub(super) fn key_hint<'a>(key: &'a str, label: &'a str, theme: &Theme) -> Vec<S
                 .bg(theme.raised())
                 .bold(),
         ),
-        Span::styled(
-            format!(" {label}  "),
-            Style::default().fg(theme.text_secondary),
-        ),
+        Span::styled(format!(" {label}  "), Style::default().fg(theme.text())),
     ]
+}
+
+pub(super) fn primary_action(key: &str, label: &str, theme: &Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(" {key}  {label} "),
+        Style::default().fg(theme.bg).bg(theme.highlight).bold(),
+    ))
 }
 
 /// Clip by terminal cells, not bytes. Bound work even for pathological server text.

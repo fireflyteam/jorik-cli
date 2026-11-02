@@ -1,0 +1,20 @@
+
+
+
+  ╭ JORIK ───────────────────────────────────────────────────────────────────╮
+  │ Sign in to Jorik                                                         │
+  │ Control music in your Discord voice channel.                             │
+  │                                                                          │
+  │ Server                                                                   │
+  │ https://example.com                                                      │
+  │ 1. Sign in with Discord                                                  │
+  │                                                                          │
+  │ 2. Join a voice channel                                                  │
+  │                                                                          │
+  │ 3. Add a song or paste a URL                                             │
+  │ Older login files found.                                                 │
+  │ Sign in again, or press ? for migration options.                         │
+  │  Enter  Sign in with Discord                                             │
+  │  \  change server   ?  help   q  quit                                    │
+  │ Credentials are stored securely for this server.                         │
+  ╰──────────────────────────────────────────────────────────────────────────╯

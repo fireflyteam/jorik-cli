@@ -3,6 +3,8 @@
 ## 0.5.0-dev.1 (unreleased)
 
 ### Visual design and keyboard UX
+- Raise small-text contrast across themes, soften Emerald accents, and use a filled sign-in action with bright, plain-language instructions.
+- Keep legacy-login notices separate from onboarding; expose safe migration instructions through sign-in help instead of a dense warning paragraph.
 - Introduce a shared visual language: layered dark surfaces, rounded panels, focus rings, status badges, and key hints without requiring icon fonts.
 - Refresh the player with a slim progress timeline, readable title/artist queue columns, loaded-range indicators, and clear empty/loading/cached states.
 - Redesign sign-in, settings, command palette, account, update, help, and diagnostics screens; dim dialog backdrops and preserve the originating screen.

@@ -100,6 +100,11 @@ fn polished_screen_snapshots() {
     app.view = View::LoginRequired;
     app.token = None;
     snapshot("welcome-80x24", &mut app, 80, 24);
+    app.theme = "Emerald".into();
+    app.legacy_credentials = true;
+    snapshot("welcome-legacy-80x24", &mut app, 80, 24);
+    app.open_overlay(View::Help);
+    snapshot("sign-in-help-80x24", &mut app, 80, 24);
 }
 
 #[test]
@@ -145,12 +150,16 @@ fn named_themes_keep_secondary_text_and_selected_text_readable() {
     ] {
         let theme = get_theme(name);
         assert!(
-            contrast(theme.text_secondary, theme.surface()) >= 4.5,
+            contrast(theme.text_secondary, theme.raised()) >= 7.0,
             "{name}: secondary text"
         );
         assert!(
             contrast(theme.highlight, theme.selection()) >= 4.5,
             "{name}: selection"
+        );
+        assert!(
+            contrast(theme.bg, theme.highlight) >= 4.5,
+            "{name}: primary action"
         );
     }
 }
@@ -210,11 +219,43 @@ fn settings_support_cursor_editing_paste_and_reverse_navigation_without_saving()
 }
 
 #[test]
+fn legacy_warning_does_not_replace_onboarding_or_expose_commands_until_help() {
+    let mut app = app();
+    app.view = View::LoginRequired;
+    app.legacy_credentials = true;
+    app.theme = "Emerald".into();
+    let terminal = draw(&mut app, 80, 24);
+    let screen = text(&terminal);
+    assert!(screen.contains("Sign in to Jorik") && screen.contains("1. Sign in with Discord"));
+    assert!(screen.contains("Older login files found"));
+    assert!(!screen.contains("auth migrate"));
+    let theme = get_theme(&app.theme);
+    assert!(
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .filter(|cell| cell.bg == theme.highlight)
+            .count()
+            > 20
+    );
+    key(&mut app, KeyCode::Char('?'));
+    assert!(app.view == View::Help && app.content_view() == View::LoginRequired);
+    let help = text(&draw(&mut app, 80, 24));
+    assert!(help.contains("jorik auth migrate --confirm-server SERVER_URL"));
+    assert!(help.contains("original issuing server"));
+    key(&mut app, KeyCode::Esc);
+    assert!(app.view == View::LoginRequired);
+    assert!(app.legacy_credentials);
+}
+
+#[test]
 fn compact_sign_in_and_confirmation_keep_the_actions_visible() {
     let mut app = app();
     app.view = View::LoginRequired;
     let screen = text(&draw(&mut app, 40, 12));
-    assert!(screen.contains("Enter sign in") && screen.contains("q quit"));
+    assert!(screen.contains("Enter") && screen.contains("sign in") && screen.contains("q quit"));
     app.view = View::ConfirmClear;
     let screen = text(&draw(&mut app, 24, 8));
     assert!(screen.contains("keep queue") && screen.contains("clear queue"));

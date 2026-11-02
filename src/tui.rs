@@ -71,42 +71,42 @@ fn get_theme(name: &str) -> Theme {
             border: Color::Rgb(40, 40, 60),
             primary: Color::Rgb(100, 100, 255),
             highlight: Color::Rgb(150, 150, 255),
-            text_secondary: Color::Rgb(150, 150, 174),
+            text_secondary: Color::Rgb(190, 197, 214),
         },
         "Emerald" => Theme {
-            bg: Color::Rgb(5, 15, 5),
-            border: Color::Rgb(40, 60, 40),
-            primary: Color::Rgb(50, 200, 50),
-            highlight: Color::Rgb(100, 255, 100),
-            text_secondary: Color::Rgb(145, 168, 155),
+            bg: Color::Rgb(10, 18, 17),
+            border: Color::Rgb(60, 84, 79),
+            primary: Color::Rgb(100, 196, 154),
+            highlight: Color::Rgb(147, 224, 179),
+            text_secondary: Color::Rgb(192, 207, 201),
         },
         "Ruby" => Theme {
             bg: Color::Rgb(15, 5, 5),
             border: Color::Rgb(60, 40, 40),
             primary: Color::Rgb(200, 50, 50),
             highlight: Color::Rgb(255, 100, 100),
-            text_secondary: Color::Rgb(178, 148, 156),
+            text_secondary: Color::Rgb(212, 194, 201),
         },
         "Ocean" => Theme {
             bg: Color::Rgb(5, 10, 20),
             border: Color::Rgb(40, 60, 100),
             primary: Color::Rgb(50, 150, 255),
             highlight: Color::Rgb(100, 200, 255),
-            text_secondary: Color::Rgb(150, 166, 191),
+            text_secondary: Color::Rgb(190, 205, 222),
         },
         "Synthwave" => Theme {
             bg: Color::Rgb(20, 10, 30),
             border: Color::Rgb(100, 40, 100),
             primary: Color::Rgb(255, 50, 255),
             highlight: Color::Rgb(255, 150, 50), // Orange highlight
-            text_secondary: Color::Rgb(183, 155, 203),
+            text_secondary: Color::Rgb(209, 193, 226),
         },
         "Sepia" => Theme {
             bg: Color::Rgb(30, 25, 20),
             border: Color::Rgb(80, 70, 60),
             primary: Color::Rgb(180, 140, 100),
             highlight: Color::Rgb(220, 180, 140),
-            text_secondary: Color::Rgb(181, 164, 146),
+            text_secondary: Color::Rgb(211, 199, 185),
         },
         _ => Theme {
             // Default Jorik Purple
@@ -114,7 +114,7 @@ fn get_theme(name: &str) -> Theme {
             border: Color::Rgb(60, 60, 80),
             primary: JORIK_PURPLE,
             highlight: JORIK_HIGHLIGHT,
-            text_secondary: Color::Rgb(150, 150, 170),
+            text_secondary: Color::Rgb(193, 198, 214),
         },
     }
 }
@@ -204,6 +204,7 @@ struct App {
     lyrics_page_size: u16,
 
     auth_info_text: Option<String>,
+    legacy_credentials: bool,
     login_cancel: Option<CancellationToken>,
     login_generation: u64,
     signing_out: bool,
@@ -311,6 +312,7 @@ impl App {
             lyrics_max_scroll: 0,
             lyrics_page_size: 10,
             auth_info_text: None,
+            legacy_credentials: false,
             login_cancel: None,
             login_generation: 0,
             signing_out: false,
@@ -1202,9 +1204,7 @@ pub async fn run(
     let (ws_tx, ws_rx) = tokio::sync::mpsc::channel::<Message>(32);
 
     let mut app_struct = App::new(client.clone(), settings, token, guild_id, user_id);
-    if crate::credentials::legacy_present() {
-        app_struct.auth_info_text = Some("Legacy plaintext credentials are not reused. Run `auth migrate --confirm-server URL` or `auth clear-legacy --confirm`, or start a fresh login.".to_string());
-    }
+    app_struct.legacy_credentials = crate::credentials::legacy_present();
     app_struct.ws_sender = Some(ws_tx);
 
     let app = Arc::new(Mutex::new(app_struct));
@@ -1440,6 +1440,7 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent, app_arc: Arc<Mutex<App>
             }
         }
         View::LoginRequired => match key.code {
+            KeyCode::Char('?') if !app.is_loading => app.open_overlay(View::Help),
             KeyCode::Enter => {
                 start_login(app, app_arc);
             }
@@ -2082,8 +2083,11 @@ fn ui(f: &mut Frame, app: &mut App) {
         );
         return;
     }
-    if app.view == View::LoginRequired {
+    if app.content_view() == View::LoginRequired {
         views::welcome(f, app, &theme);
+        if app.view == View::Help {
+            views::sign_in_help(f, app, &theme);
+        }
         return;
     }
     let area = f.area();

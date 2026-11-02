@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
     let area = popup_rect(76, 17, f.area());
-    let block = panel(" Welcome to Jorik ", theme, true);
+    let block = panel(" JORIK ", theme, true);
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.height < 11 {
@@ -16,45 +16,60 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
         .split(inner);
         f.render_widget(
             Paragraph::new(fit_text(&single_line(&app.base_url, app), inner.width))
-                .style(Style::default().fg(theme.highlight)),
+                .style(Style::default().fg(theme.text())),
             rows[0],
         );
         let status = app
             .auth_info_text
             .as_deref()
-            .unwrap_or("Sign in with Discord to manage music. Credentials use your OS store.");
+            .unwrap_or(if app.legacy_credentials {
+                "Older login found. Sign in again, or press ? for migration help."
+            } else {
+                "Sign in with Discord, then join a voice channel to play music."
+            });
         f.render_widget(
             Paragraph::new(crate::output::safe_text(status, app.token.as_deref()))
                 .wrap(Wrap { trim: true })
-                .style(Style::default().fg(theme.text_secondary)),
+                .style(Style::default().fg(theme.text())),
             rows[1],
         );
         f.render_widget(
-            Paragraph::new(if app.is_loading {
-                "Esc cancel login\nq quit"
-            } else {
-                "Enter sign in\n\\ server · q quit"
-            })
-            .style(Style::default().fg(theme.highlight)),
+            Paragraph::new(vec![
+                super::design::primary_action(
+                    if app.is_loading { "Esc" } else { "Enter" },
+                    if app.is_loading {
+                        "cancel login"
+                    } else {
+                        "sign in"
+                    },
+                    theme,
+                ),
+                Line::from(Span::styled(
+                    "\\ server · q quit",
+                    Style::default().fg(theme.text()),
+                )),
+            ]),
             rows[2],
         );
         return;
     }
+    let show_legacy = app.legacy_credentials && !app.is_loading;
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(2),
         Constraint::Min(0),
+        Constraint::Length(if show_legacy { 2 } else { 0 }),
         Constraint::Length(3),
     ])
     .split(inner);
     f.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                "YOUR MUSIC. YOUR TERMINAL.",
-                Style::default().fg(theme.highlight).bold(),
+                "Sign in to Jorik",
+                Style::default().fg(theme.text()).bold(),
             )),
             Line::from(Span::styled(
-                "A quieter place to control the whole room.",
+                "Control music in your Discord voice channel.",
                 Style::default().fg(theme.text()),
             )),
         ]),
@@ -63,43 +78,145 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
     f.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                "CONNECTING TO",
+                "Server",
                 Style::default().fg(theme.text_secondary),
             )),
-            Line::from(fit_text(&single_line(&app.base_url, app), rows[1].width)),
+            Line::from(Span::styled(
+                fit_text(&single_line(&app.base_url, app), rows[1].width),
+                Style::default().fg(theme.text()),
+            )),
         ]),
         rows[1],
     );
-    let status = app.auth_info_text.as_deref().unwrap_or("01  Sign in with Discord\n    A secure browser login, scoped to this server.\n\n02  Join your voice channel\n\n03  Search for a song, or paste a URL");
-    f.render_widget(
-        Paragraph::new(crate::output::safe_text(status, app.token.as_deref()))
-            .wrap(Wrap { trim: false })
-            .style(Style::default().fg(theme.text_secondary)),
-        rows[2],
-    );
-    let keys = if app.is_loading {
-        vec![("Esc", "cancel login"), ("q", "quit")]
+    if let Some(status) = &app.auth_info_text {
+        f.render_widget(
+            Paragraph::new(crate::output::safe_text(status, app.token.as_deref()))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(theme.text())),
+            rows[2],
+        );
     } else {
-        vec![("Enter", "sign in"), ("\\", "change server"), ("q", "quit")]
+        let lines = [
+            "1. Sign in with Discord",
+            "",
+            "2. Join a voice channel",
+            "",
+            "3. Add a song or paste a URL",
+        ]
+        .into_iter()
+        .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text()).bold())))
+        .collect::<Vec<_>>();
+        f.render_widget(Paragraph::new(lines), rows[2]);
+    }
+    if show_legacy {
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "Older login files found.",
+                    Style::default().fg(theme.warning()).bold(),
+                )),
+                Line::from(Span::styled(
+                    "Sign in again, or press ? for migration options.",
+                    Style::default().fg(theme.text()),
+                )),
+            ]),
+            rows[3],
+        );
+    }
+    let secondary = if app.is_loading {
+        vec![("q", "quit")]
+    } else {
+        vec![("\\", "change server"), ("?", "help"), ("q", "quit")]
     };
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(""),
+            super::design::primary_action(
+                if app.is_loading { "Esc" } else { "Enter" },
+                if app.is_loading {
+                    "Cancel login"
+                } else {
+                    "Sign in with Discord"
+                },
+                theme,
+            ),
             Line::from(
-                keys.iter()
+                secondary
+                    .iter()
                     .flat_map(|(key, label)| key_hint(key, label, theme))
                     .collect::<Vec<_>>(),
             ),
             Line::from(Span::styled(
                 if app.is_loading {
-                    "Waiting for browser authorization…"
+                    "Waiting for your browser…"
                 } else {
-                    "No plaintext credential fallback. No playback requests before sign-in."
+                    "Credentials are stored securely for this server."
                 },
                 Style::default().fg(theme.text_secondary),
             )),
         ]),
-        rows[3],
+        rows[4],
+    );
+}
+
+pub(super) fn sign_in_help(f: &mut Frame, app: &mut App, theme: &Theme) {
+    let area = popup_rect(76, 20, f.area());
+    prepare_modal(f, area, theme);
+    let block = panel(
+        if app.legacy_credentials {
+            " Older login options "
+        } else {
+            " Sign-in help "
+        },
+        theme,
+        true,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).split(inner);
+    let text = if app.legacy_credentials {
+        "Sign in again (recommended)\nPress Esc, then Enter for a fresh Discord login.\nYour old files are left untouched.\n\nKeep an existing login\nRun in a separate terminal:\njorik auth migrate --confirm-server SERVER_URL\nReplace SERVER_URL with the original issuing server.\nDo not infer the issuer from the currently selected server.\n\nRemove old login files\njorik auth clear-legacy --confirm\nPermanent deletion; this does not revoke the token remotely."
+    } else {
+        "Press Enter to open Discord authorization in your browser.\nAfter signing in, join a voice channel that Jorik can access.\n\nYour credentials are saved in the OS credential store and\nare used only for the selected server.\n\nThe backend must support the CLI 0.5 login protocol.\nIf your credential store is locked, unlock it and retry.\n\nFor headless use, provide JORIK_TOKEN through your\nenvironment or secret manager. It is not saved by Jorik."
+    };
+    let lines = text
+        .lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                line,
+                Style::default().fg(theme.text()).add_modifier(
+                    if line.starts_with("jorik ")
+                        || [
+                            "Sign in again (recommended)",
+                            "Keep an existing login",
+                            "Remove old login files",
+                        ]
+                        .contains(&line)
+                    {
+                        ratatui::style::Modifier::BOLD
+                    } else {
+                        ratatui::style::Modifier::empty()
+                    },
+                ),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    app.help_scroll = app.help_scroll.min(
+        paragraph
+            .line_count(rows[0].width)
+            .saturating_sub(usize::from(rows[0].height))
+            .min(usize::from(u16::MAX)) as u16,
+    );
+    f.render_widget(paragraph.scroll((app.help_scroll, 0)), rows[0]);
+    f.render_widget(
+        Paragraph::new(Line::from(
+            [
+                key_hint("↑↓", "scroll", theme),
+                key_hint("Esc", "back", theme),
+            ]
+            .concat(),
+        )),
+        rows[1],
     );
 }
 

@@ -1,20 +1,20 @@
 
 
 
-  ╭ Welcome to Jorik ────────────────────────────────────────────────────────╮
-  │ YOUR MUSIC. YOUR TERMINAL.                                               │
-  │ A quieter place to control the whole room.                               │
+  ╭ JORIK ───────────────────────────────────────────────────────────────────╮
+  │ Sign in to Jorik                                                         │
+  │ Control music in your Discord voice channel.                             │
   │                                                                          │
-  │ CONNECTING TO                                                            │
+  │ Server                                                                   │
   │ https://example.com                                                      │
-  │ 01  Sign in with Discord                                                 │
-  │     A secure browser login, scoped to this server.                       │
+  │ 1. Sign in with Discord                                                  │
   │                                                                          │
-  │ 02  Join your voice channel                                              │
+  │ 2. Join a voice channel                                                  │
   │                                                                          │
-  │ 03  Search for a song, or paste a URL                                    │
+  │ 3. Add a song or paste a URL                                             │
   │                                                                          │
   │                                                                          │
-  │  Enter  sign in   \  change server   q  quit                             │
-  │ No plaintext credential fallback. No playback requests before sign-in.   │
+  │  Enter  Sign in with Discord                                             │
+  │  \  change server   ?  help   q  quit                                    │
+  │ Credentials are stored securely for this server.                         │
   ╰──────────────────────────────────────────────────────────────────────────╯

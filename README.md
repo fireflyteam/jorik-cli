@@ -43,6 +43,8 @@ The 0.5 player uses layered dark surfaces, rounded panels, readable title/artist
 columns, explicit focus rings, and context-aware keyboard hints. Wide terminals
 also show the spectrum; compact terminals prioritize playback and queue browsing.
 Dialogs keep your place in the underlying screen and return there when dismissed.
+Small text uses higher-contrast colors; the welcome screen keeps migration details
+under `?` help rather than replacing the sign-in instructions.
 
 ```sh
 cargo run -- tui
@@ -111,6 +113,10 @@ followed automatically. WebSocket bearer tokens use the Authorization header,
 never a query parameter.
 
 ### Upgrading from 0.4.x
+
+The TUI shows a brief notice when older login files exist. Press `?` on the
+sign-in screen for migration options, or press Enter for a fresh browser login.
+A fresh login leaves those older files untouched.
 
 Old `auth.json` files did not identify their server. They are **never reused or
 migrated automatically**, even for the public server. Confirm the server that
