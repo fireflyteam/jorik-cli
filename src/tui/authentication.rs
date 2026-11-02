@@ -31,7 +31,7 @@ pub(super) fn start_login(app: &mut App, shared: Arc<Mutex<App>>) {
                 app.fatal_error = None;
                 app.auth_info_text = Some(format!(
                     "Logged in as {}. Credentials saved in the OS store.",
-                    auth.username.as_deref().unwrap_or("Unknown")
+                    auth.display_name()
                 ));
                 if app.view == View::LoginRequired {
                     app.view = View::Main;
@@ -134,7 +134,7 @@ pub(super) fn show_auth_info(app: &mut App, shared: Arc<Mutex<App>>) {
         app.auth_info_text = Some(match saved {
             Ok(Some(auth)) => format!(
                 "Server: {base}\nStorage: OS credential store\nUser: {}\nToken: [redacted]",
-                auth.username.as_deref().unwrap_or("Unknown")
+                auth.display_name()
             ),
             Ok(None) => format!("No saved credentials for {base}."),
             Err(error) => format!("Could not read credentials: {error}"),

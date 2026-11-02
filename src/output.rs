@@ -15,6 +15,12 @@ pub fn safe_text(text: &str, token: Option<&str>) -> String {
     }
 }
 
+pub fn safe_json_text(value: &Value, token: Option<&str>) -> String {
+    let mut value = value.clone();
+    scrub_json(&mut value, token);
+    value.to_string()
+}
+
 pub fn scrub_json(value: &mut Value, token: Option<&str>) {
     match value {
         Value::String(text) => *text = safe_text(text, token),

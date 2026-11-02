@@ -18,6 +18,12 @@ fn untrusted_metadata_and_logs_are_scrubbed_and_elapsed_time_saturates() {
     app.duration_ms = 0;
     app.update_realtime();
     assert_eq!(app.elapsed_ms, u64::MAX);
+    app.pending_commands
+        .insert("cmd-test".into(), Instant::now());
+    let event: WsEvent = serde_json::from_value(serde_json::json!({"type":"action_response","id":"cmd-test","success":false,"error":{"token":"another-secret","message":"secret"}})).unwrap();
+    app.finish_ws_action(&event);
+    let error = app.error_message.as_ref().unwrap();
+    assert!(!error.contains("another-secret") && !error.contains("secret"));
 }
 
 #[tokio::test]

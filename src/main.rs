@@ -971,7 +971,7 @@ async fn auth_info(base_url: &str) -> Result<()> {
     if let Some(auth) = credentials::load(base_url).await? {
         println!(
             "Server: {base_url}\nStorage: OS credential store\nUser: {}\nToken: [redacted]",
-            auth.username.as_deref().unwrap_or("Unknown")
+            auth.display_name()
         );
     } else {
         println!("Not authenticated for {base_url}. Run `jorik auth login`.");

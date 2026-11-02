@@ -285,8 +285,10 @@ fn signout_is_scoped_and_legacy_erasure_requires_explicit_intent() {
 
 #[test]
 fn credential_debug_and_validation_do_not_expose_secrets() {
-    let value = auth("super-secret-token");
+    let mut value = auth("super-secret-token");
+    value.username = Some(value.token.clone());
     assert!(!format!("{value:?}").contains("super-secret-token"));
+    assert_eq!(value.display_name(), "[redacted]");
     for token in ["", "has spaces", "header\r\ninjection", "secret\x1b[31m"] {
         assert!(validate_auth(&auth(token)).is_err());
     }

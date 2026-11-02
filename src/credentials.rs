@@ -28,8 +28,17 @@ impl fmt::Debug for Auth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Auth")
             .field("token", &"[redacted]")
-            .field("username", &self.username)
+            .field("has_username", &self.username.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+impl Auth {
+    pub fn display_name(&self) -> String {
+        crate::output::safe_text(
+            self.username.as_deref().unwrap_or("Unknown"),
+            Some(&self.token),
+        )
     }
 }
 

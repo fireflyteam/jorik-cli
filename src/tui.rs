@@ -456,7 +456,12 @@ impl App {
             let detail = event
                 .message
                 .clone()
-                .or_else(|| event.error.as_ref().map(Value::to_string))
+                .or_else(|| {
+                    event
+                        .error
+                        .as_ref()
+                        .map(|error| crate::output::safe_json_text(error, self.token.as_deref()))
+                })
                 .or_else(|| {
                     event
                         .data
@@ -466,6 +471,10 @@ impl App {
                         .map(str::to_string)
                 })
                 .unwrap_or_else(|| "The server rejected the command.".to_string());
+            let detail = crate::output::safe_text(&detail, self.token.as_deref())
+                .chars()
+                .take(512)
+                .collect::<String>();
             self.error_message = Some(format!("Command failed: {detail}"));
         }
     }
@@ -698,9 +707,13 @@ async fn checked_request(
     let body = crate::api::response_text(response)
         .await
         .map_err(|error| error.to_string())?;
+    let display = match serde_json::from_str::<Value>(&body) {
+        Ok(value) => crate::output::safe_json_text(&value, None),
+        Err(_) => crate::output::safe_text(&body, None),
+    };
     Err(format!(
         "HTTP {status}: {}",
-        body.chars().take(512).collect::<String>()
+        display.chars().take(512).collect::<String>()
     ))
 }
 
