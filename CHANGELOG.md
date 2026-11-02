@@ -3,6 +3,7 @@
 ## 0.5.0-dev.1 (unreleased)
 
 ### Visual design and keyboard UX
+- Space the sign-in screen with explicit blank rows and wider interior padding; remove the repeated checklist and isolate the legacy notice from the action keys.
 - Raise small-text contrast across themes, soften Emerald accents, and use a filled sign-in action with bright, plain-language instructions.
 - Keep legacy-login notices separate from onboarding; expose safe migration instructions through sign-in help instead of a dense warning paragraph.
 - Introduce a shared visual language: layered dark surfaces, rounded panels, focus rings, status badges, and key hints without requiring icon fonts.
@@ -12,7 +13,7 @@
 - Keep blank track submissions open with inline validation.
 - Add bounded, accurately wrapped lyrics scrolling, refresh, request coalescing, and track-change invalidation.
 - Preserve HTTP playback state when a WebSocket upgrade fails; invalidate it only when an established live connection disconnects.
-- Add deterministic UI previews, five rendering snapshots, compact-screen regression tests, and real 80×24 PTY interaction validation.
+- Add deterministic UI previews, responsive rendering snapshots, compact-screen regression tests, and real 80×24 PTY interaction validation.
 
 ### Credential and login hardening
 - Store authentication data in Windows Credential Manager, macOS Keychain, or Linux Secret Service; never silently fall back to plaintext.

@@ -1,5 +1,5 @@
 
-
+  ╭ JORIK ───────────────────────────────────────────────────────────────────╮
   ╭ Older login options ─────────────────────────────────────────────────────╮
   │ Sign in again (recommended)                                              │
   │ Press Esc, then Enter for a fresh Discord login.                         │

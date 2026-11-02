@@ -3,63 +3,103 @@ use super::design::{fit_text, key_hint, panel, prepare_modal, single_line};
 use super::*;
 
 pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
-    let area = popup_rect(76, 17, f.area());
-    let block = panel(" JORIK ", theme, true);
+    let expanded = f.area().width >= 64 && f.area().height >= 20;
+    let height = if app.auth_info_text.is_some() { 24 } else { 21 };
+    let area = popup_rect(76, height, f.area());
+    let padding = if expanded { 3 } else { 1 };
+    let block = panel(" JORIK ", theme, true).padding(ratatui::widgets::Padding::new(
+        padding,
+        padding,
+        u16::from(expanded),
+        u16::from(expanded),
+    ));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if inner.height < 11 {
+    if !expanded {
+        let has_room = inner.height >= 9;
         let rows = Layout::vertical([
             Constraint::Length(1),
+            Constraint::Length(u16::from(has_room)),
+            Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(2),
+            Constraint::Length(u16::from(has_room)),
+            Constraint::Length(1),
+            Constraint::Length(u16::from(has_room)),
+            Constraint::Length(1),
         ])
         .split(inner);
         f.render_widget(
-            Paragraph::new(fit_text(&single_line(&app.base_url, app), inner.width))
-                .style(Style::default().fg(theme.text())),
+            Paragraph::new("Sign in to Jorik").style(Style::default().fg(theme.text()).bold()),
             rows[0],
+        );
+        f.render_widget(
+            Paragraph::new(fit_text(&single_line(&app.base_url, app), inner.width))
+                .style(Style::default().fg(theme.text_secondary)),
+            rows[2],
         );
         let status = app
             .auth_info_text
             .as_deref()
             .unwrap_or(if app.legacy_credentials {
-                "Older login found. Sign in again, or press ? for migration help."
+                "Older login found. Press ? for options."
             } else {
-                "Sign in with Discord, then join a voice channel to play music."
+                "Connect your Discord account to continue."
             });
         f.render_widget(
             Paragraph::new(crate::output::safe_text(status, app.token.as_deref()))
                 .wrap(Wrap { trim: true })
                 .style(Style::default().fg(theme.text())),
-            rows[1],
+            rows[3],
         );
         f.render_widget(
-            Paragraph::new(vec![
-                super::design::primary_action(
-                    if app.is_loading { "Esc" } else { "Enter" },
-                    if app.is_loading {
-                        "cancel login"
-                    } else {
-                        "sign in"
-                    },
-                    theme,
-                ),
-                Line::from(Span::styled(
-                    "\\ server · q quit",
-                    Style::default().fg(theme.text()),
-                )),
-            ]),
-            rows[2],
+            Paragraph::new(super::design::primary_action(
+                if app.is_loading { "Esc" } else { "Enter" },
+                if app.is_loading {
+                    "cancel login"
+                } else {
+                    "sign in"
+                },
+                theme,
+            )),
+            rows[5],
+        );
+        f.render_widget(
+            Paragraph::new(if app.is_loading {
+                "q quit"
+            } else if inner.width < 28 {
+                "? help · q quit"
+            } else {
+                "\\ server · ? help · q quit"
+            })
+            .style(Style::default().fg(theme.text())),
+            rows[7],
         );
         return;
     }
+
+    let has_status = app.auth_info_text.is_some();
     let show_legacy = app.legacy_credentials && !app.is_loading;
+    // Gaps are independent layout rows, never an incidental side effect of wrapping.
     let rows = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Length(2),
-        Constraint::Min(0),
-        Constraint::Length(if show_legacy { 2 } else { 0 }),
-        Constraint::Length(3),
+        Constraint::Length(3), // title, blank line, short explanation
+        Constraint::Length(1),
+        Constraint::Length(2), // server label and URL
+        Constraint::Length(if has_status { 1 } else { 2 }),
+        if has_status {
+            Constraint::Min(1)
+        } else {
+            Constraint::Length(0)
+        },
+        Constraint::Length(u16::from(has_status)),
+        Constraint::Length(1), // primary action
+        Constraint::Length(1),
+        Constraint::Length(1), // secondary actions
+        if has_status {
+            Constraint::Length(1)
+        } else {
+            Constraint::Min(2)
+        },
+        Constraint::Length(u16::from(show_legacy)),
     ])
     .split(inner);
     f.render_widget(
@@ -68,8 +108,9 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
                 "Sign in to Jorik",
                 Style::default().fg(theme.text()).bold(),
             )),
+            Line::from(""),
             Line::from(Span::styled(
-                "Control music in your Discord voice channel.",
+                "Connect your Discord account to continue.",
                 Style::default().fg(theme.text()),
             )),
         ]),
@@ -82,80 +123,53 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
                 Style::default().fg(theme.text_secondary),
             )),
             Line::from(Span::styled(
-                fit_text(&single_line(&app.base_url, app), rows[1].width),
+                fit_text(&single_line(&app.base_url, app), rows[2].width),
                 Style::default().fg(theme.text()),
             )),
         ]),
-        rows[1],
+        rows[2],
     );
     if let Some(status) = &app.auth_info_text {
         f.render_widget(
             Paragraph::new(crate::output::safe_text(status, app.token.as_deref()))
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(theme.text())),
-            rows[2],
-        );
-    } else {
-        let lines = [
-            "1. Sign in with Discord",
-            "",
-            "2. Join a voice channel",
-            "",
-            "3. Add a song or paste a URL",
-        ]
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text()).bold())))
-        .collect::<Vec<_>>();
-        f.render_widget(Paragraph::new(lines), rows[2]);
-    }
-    if show_legacy {
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled(
-                    "Older login files found.",
-                    Style::default().fg(theme.warning()).bold(),
-                )),
-                Line::from(Span::styled(
-                    "Sign in again, or press ? for migration options.",
-                    Style::default().fg(theme.text()),
-                )),
-            ]),
-            rows[3],
+            rows[4],
         );
     }
-    let secondary = if app.is_loading {
+    f.render_widget(
+        Paragraph::new(super::design::primary_action(
+            if app.is_loading { "Esc" } else { "Enter" },
+            if app.is_loading {
+                "Cancel login"
+            } else {
+                "Sign in with Discord"
+            },
+            theme,
+        )),
+        rows[6],
+    );
+    let shortcuts = if app.is_loading {
         vec![("q", "quit")]
     } else {
         vec![("\\", "change server"), ("?", "help"), ("q", "quit")]
     };
     f.render_widget(
-        Paragraph::new(vec![
-            super::design::primary_action(
-                if app.is_loading { "Esc" } else { "Enter" },
-                if app.is_loading {
-                    "Cancel login"
-                } else {
-                    "Sign in with Discord"
-                },
-                theme,
-            ),
-            Line::from(
-                secondary
-                    .iter()
-                    .flat_map(|(key, label)| key_hint(key, label, theme))
-                    .collect::<Vec<_>>(),
-            ),
-            Line::from(Span::styled(
-                if app.is_loading {
-                    "Waiting for your browser…"
-                } else {
-                    "Credentials are stored securely for this server."
-                },
-                Style::default().fg(theme.text_secondary),
-            )),
-        ]),
-        rows[4],
+        Paragraph::new(Line::from(
+            shortcuts
+                .iter()
+                .flat_map(|(key, label)| key_hint(key, label, theme))
+                .collect::<Vec<_>>(),
+        )),
+        rows[8],
     );
+    if show_legacy {
+        f.render_widget(
+            Paragraph::new("Older login files found. Press ? for options.")
+                .style(Style::default().fg(theme.warning())),
+            rows[10],
+        );
+    }
 }
 
 pub(super) fn sign_in_help(f: &mut Frame, app: &mut App, theme: &Theme) {

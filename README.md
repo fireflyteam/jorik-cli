@@ -44,7 +44,9 @@ columns, explicit focus rings, and context-aware keyboard hints. Wide terminals
 also show the spectrum; compact terminals prioritize playback and queue browsing.
 Dialogs keep your place in the underlying screen and return there when dismissed.
 Small text uses higher-contrast colors; the welcome screen keeps migration details
-under `?` help rather than replacing the sign-in instructions.
+under `?` help rather than replacing the sign-in instructions. The sign-in card
+uses separate, padded sections for the server, primary action, shortcuts, and
+legacy notice; repeated onboarding steps are kept off this screen.
 
 ```sh
 cargo run -- tui

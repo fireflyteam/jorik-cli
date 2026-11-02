@@ -103,6 +103,7 @@ fn polished_screen_snapshots() {
     app.theme = "Emerald".into();
     app.legacy_credentials = true;
     snapshot("welcome-legacy-80x24", &mut app, 80, 24);
+    snapshot("welcome-legacy-98x24", &mut app, 98, 24);
     app.open_overlay(View::Help);
     snapshot("sign-in-help-80x24", &mut app, 80, 24);
 }
@@ -226,7 +227,8 @@ fn legacy_warning_does_not_replace_onboarding_or_expose_commands_until_help() {
     app.theme = "Emerald".into();
     let terminal = draw(&mut app, 80, 24);
     let screen = text(&terminal);
-    assert!(screen.contains("Sign in to Jorik") && screen.contains("1. Sign in with Discord"));
+    assert!(screen.contains("Sign in to Jorik") && screen.contains("Connect your Discord account"));
+    assert!(!screen.contains("1. Sign in") && !screen.contains("3. Add a song"));
     assert!(screen.contains("Older login files found"));
     assert!(!screen.contains("auth migrate"));
     let theme = get_theme(&app.theme);
@@ -251,11 +253,39 @@ fn legacy_warning_does_not_replace_onboarding_or_expose_commands_until_help() {
 }
 
 #[test]
+fn welcome_sections_have_real_blank_rows_at_screenshot_sizes() {
+    for (width, height) in [(80, 24), (98, 24), (80, 20)] {
+        let mut app = app();
+        app.view = View::LoginRequired;
+        app.legacy_credentials = true;
+        let terminal = draw(&mut app, width, height);
+        let screen = text(&terminal);
+        let rows = screen.lines().collect::<Vec<_>>();
+        let at = |label: &str| rows.iter().position(|line| line.contains(label)).unwrap();
+        let blank = |row: usize| rows[row].chars().all(|c| c.is_whitespace() || c == '│');
+        let title = at("Sign in to Jorik");
+        let server = at("https://example.com");
+        let action = at("Enter");
+        let shortcuts = at("change server");
+        let notice = at("Older login files found");
+        assert!(blank(title + 1));
+        assert!(blank(server + 1) && blank(server + 2));
+        assert!(action >= server + 3 && blank(action + 1));
+        assert!(shortcuts >= action + 2 && blank(shortcuts + 1));
+        assert!(notice >= shortcuts + 2);
+    }
+}
+
+#[test]
 fn compact_sign_in_and_confirmation_keep_the_actions_visible() {
     let mut app = app();
     app.view = View::LoginRequired;
-    let screen = text(&draw(&mut app, 40, 12));
-    assert!(screen.contains("Enter") && screen.contains("sign in") && screen.contains("q quit"));
+    for (width, height) in [(40, 12), (24, 8)] {
+        let screen = text(&draw(&mut app, width, height));
+        assert!(
+            screen.contains("Enter") && screen.contains("sign in") && screen.contains("q quit")
+        );
+    }
     app.view = View::ConfirmClear;
     let screen = text(&draw(&mut app, 24, 8));
     assert!(screen.contains("keep queue") && screen.contains("clear queue"));

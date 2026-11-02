@@ -1,0 +1,22 @@
+
+           ╭ JORIK ───────────────────────────────────────────────────────────────────╮
+           │                                                                          │
+           │   Sign in to Jorik                                                       │
+           │                                                                          │
+           │   Connect your Discord account to continue.                              │
+           │                                                                          │
+           │   Server                                                                 │
+           │   https://example.com                                                    │
+           │                                                                          │
+           │                                                                          │
+           │    Enter  Sign in with Discord                                           │
+           │                                                                          │
+           │    \  change server   ?  help   q  quit                                  │
+           │                                                                          │
+           │                                                                          │
+           │                                                                          │
+           │                                                                          │
+           │                                                                          │
+           │   Older login files found. Press ? for options.                          │
+           │                                                                          │
+           ╰──────────────────────────────────────────────────────────────────────────╯

@@ -1,20 +1,22 @@
 
-
-
   ╭ JORIK ───────────────────────────────────────────────────────────────────╮
-  │ Sign in to Jorik                                                         │
-  │ Control music in your Discord voice channel.                             │
   │                                                                          │
-  │ Server                                                                   │
-  │ https://example.com                                                      │
-  │ 1. Sign in with Discord                                                  │
+  │   Sign in to Jorik                                                       │
   │                                                                          │
-  │ 2. Join a voice channel                                                  │
+  │   Connect your Discord account to continue.                              │
   │                                                                          │
-  │ 3. Add a song or paste a URL                                             │
+  │   Server                                                                 │
+  │   https://example.com                                                    │
   │                                                                          │
   │                                                                          │
-  │  Enter  Sign in with Discord                                             │
-  │  \  change server   ?  help   q  quit                                    │
-  │ Credentials are stored securely for this server.                         │
+  │    Enter  Sign in with Discord                                           │
+  │                                                                          │
+  │    \  change server   ?  help   q  quit                                  │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
   ╰──────────────────────────────────────────────────────────────────────────╯
