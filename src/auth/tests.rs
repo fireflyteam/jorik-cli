@@ -90,12 +90,33 @@ fn request(session: &LoginSession, query: &str) -> Vec<u8> {
 async fn exchange(address: std::net::SocketAddr, bytes: &[u8]) -> String {
     let mut stream = TcpStream::connect(address).await.unwrap();
     stream.write_all(bytes).await.unwrap();
-    let mut response = String::new();
-    timeout(Duration::from_secs(2), stream.read_to_string(&mut response))
-        .await
-        .unwrap()
-        .unwrap();
-    response
+    // Stop at Content-Length, as a browser does. On macOS closing a rejected
+    // oversized request with unread bytes can reset the socket after the reply.
+    timeout(Duration::from_secs(2), async {
+        let mut response = Vec::new();
+        loop {
+            let mut buffer = [0; 2048];
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert_ne!(count, 0, "truncated callback response");
+            response.extend_from_slice(&buffer[..count]);
+            assert!(response.len() < 32768);
+            if let Some(end) = response.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&response[..end]);
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("Content-Length: ")
+                            .map(|value| value.parse().unwrap())
+                    })
+                    .unwrap();
+                if response.len() >= end + 4 + length {
+                    return String::from_utf8(response).unwrap();
+                }
+            }
+        }
+    })
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
