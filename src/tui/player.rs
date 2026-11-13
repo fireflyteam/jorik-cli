@@ -358,10 +358,10 @@ pub(super) fn render_visualizer(f: &mut Frame, app: &mut App, theme: &Theme, are
                 let end_f = start_bin + (j + 1) as f32 * bins_per_bar;
                 let mut sum = 0.0;
                 let mut weight = 0.0;
-                for i in 0..64 {
+                for (i, &amplitude) in app.smoothed_bars.iter().enumerate().take(64) {
                     let overlap = ((i + 1) as f32).min(end_f) - (i as f32).max(start_f);
                     if overlap > 0.0 {
-                        sum += app.smoothed_bars[i] * overlap;
+                        sum += amplitude * overlap;
                         weight += overlap;
                     }
                 }
