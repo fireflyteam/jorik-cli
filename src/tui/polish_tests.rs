@@ -38,6 +38,13 @@ pub(super) fn assert_snapshot(name: &str, actual: &str) {
 }
 
 fn snapshot(name: &str, app: &mut App, width: u16, height: u16) {
+    // Freeze the fixture's age label independently of image-encoding speed.
+    if app.last_playback_received.is_some() {
+        app.last_playback_received = Some(Instant::now());
+    }
+    if app.last_queue_received.is_some() {
+        app.last_queue_received = Some(Instant::now());
+    }
     let terminal = draw(app, width, height);
     assert_snapshot(name, &text(&terminal));
     if let Some(directory) = std::env::var_os("JORIK_UI_PREVIEWS") {
@@ -49,28 +56,38 @@ fn snapshot(name: &str, app: &mut App, width: u16, height: u16) {
             _ => [231, 234, 244],
         };
         let cells=terminal.backend().buffer().content.iter().map(|cell|serde_json::json!({"text":cell.symbol(),"fg":rgb(cell.fg),"bg":rgb(cell.bg),"bold":cell.modifier.contains(ratatui::style::Modifier::BOLD)})).collect::<Vec<_>>();
+        let image_layers = app.artwork.last_area.map(|area| {
+            serde_json::json!({"file":"m83-hurry-up-were-dreaming.jpg", "x":area.x, "y":area.y, "width":area.width, "height":area.height, "background":rgb(get_theme(&app.theme).surface())})
+        }).into_iter().collect::<Vec<_>>();
         std::fs::write(
             directory.join(format!("{name}.json")),
-            serde_json::to_vec(&serde_json::json!({"width":width,"height":height,"cells":cells}))
+            serde_json::to_vec(&serde_json::json!({"width":width,"height":height,"cells":cells,"image_layers":image_layers}))
                 .unwrap(),
         )
         .unwrap();
     }
 }
 
-fn playing() -> App {
+pub(super) fn playing() -> App {
     let mut app = app();
     app.ws_connected = true;
-    app.current_track = Some("Midnight City - M83".into());
-    app.paused = false;
-    app.has_playback_state = true;
-    app.elapsed_ms = 124_000;
-    app.duration_ms = 244_000;
-    app.queue = vec![
-        "Intro - The xx".into(),
-        "Nightcall - Kavinsky".into(),
-        "A Real Hero - College".into(),
-    ];
+    app.parse_queue_response(&serde_json::json!({
+        "current":{"id":"current", "title":"Midnight City", "author":"M83", "album":"Hurry Up, We're Dreaming", "durationMs":243_000, "thumbnail":"https://example.com/cover.jpg"},
+        "upcoming":[
+            {"id":"1", "title":"Intro", "author":"The xx", "album":"xx", "durationMs":127_000},
+            {"id":"2", "title":"Nightcall", "author":"Kavinsky", "album":"OutRun", "durationMs":258_000},
+            {"id":"3", "title":"A Real Hero", "author":"College", "album":"Drive", "durationMs":268_000}
+        ],
+        "total_upcoming":3,
+        "playback":{"elapsedMs":124_000,"durationMs":243_000,"paused":false},
+        "settings":{"loopMode":"off"}
+    }));
+    app.artwork.install_fixture(
+        ::image::load_from_memory(include_bytes!(
+            "../../docs/assets/tui-study/m83-hurry-up-were-dreaming.jpg"
+        ))
+        .unwrap(),
+    );
     app
 }
 
@@ -91,6 +108,7 @@ fn polished_screen_snapshots() {
         .map(|i| ((i as f32 * 0.27).sin().abs() * 80.0) + 8.0)
         .collect();
     snapshot("player-120x32", &mut app, 120, 32);
+    snapshot("player-120x50", &mut app, 120, 50);
     app.view = View::Settings;
     snapshot("settings-80x24", &mut app, 80, 24);
     app.view = View::Main;

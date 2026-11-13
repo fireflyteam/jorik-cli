@@ -232,7 +232,7 @@ fn default_viz() -> String {
     "Bars".to_string()
 }
 fn default_layout() -> String {
-    "Standard".to_string()
+    "Desk".to_string()
 }
 
 pub fn settings_file_path() -> Option<PathBuf> {

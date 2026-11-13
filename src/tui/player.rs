@@ -2,6 +2,17 @@ use super::design::{fit_text, key_hint, panel, single_line, time_label};
 use super::*;
 
 pub(super) fn render_player_ui(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
+    if matches!(app.layout.as_str(), "Desk" | "Queue")
+        && app.visualizer_enabled
+        && area.height >= 12
+    {
+        super::desk::monitor(f, app, theme, area);
+        return;
+    }
+    if matches!(app.layout.as_str(), "Desk" | "Queue") && !app.visualizer_enabled {
+        super::desk::render(f, app, theme, area);
+        return;
+    }
     let zen = app.layout == "Zen"
         && app.focus == PlayerFocus::Playback
         && app.visualizer_enabled
@@ -50,10 +61,10 @@ fn render_now_playing(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     if let Some(track) = &app.current_track {
-        let (title, artist) = track
-            .rsplit_once(" - ")
-            .unwrap_or((track, "Unknown artist"));
-        let (state, color) = if !app.has_playback_state {
+        let (title, artist) = (track.title.as_str(), track.artist.as_str());
+        let (state, color) = if app.playback_is_stale() {
+            ("! Stale · r refresh", theme.warning())
+        } else if !app.has_playback_state {
             ("○ State unavailable", theme.text_secondary)
         } else if app.paused {
             ("Ⅱ Paused", theme.warning())
@@ -66,7 +77,13 @@ fn render_now_playing(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             lines.push(Line::from(vec![
                 Span::styled(state, Style::default().fg(color).bold()),
                 Span::styled(
-                    format!("   ·   Loop {}", app.loop_mode),
+                    format!(
+                        "   ·   Loop {}{}",
+                        app.repeat_label(),
+                        app.pending_repeat()
+                            .map(|mode| format!(" → {mode}…"))
+                            .unwrap_or_default()
+                    ),
                     Style::default().fg(theme.text_secondary),
                 ),
             ]));
@@ -178,7 +195,7 @@ fn render_queue(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     let title = format!(
         " Queue · {} tracks{} ",
         app.queue.len(),
-        if app.queue_error.is_some() {
+        if app.queue_error.is_some() || app.queue_is_stale() {
             " · cached"
         } else {
             ""
@@ -199,7 +216,7 @@ fn render_queue(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     .split(inner);
     app.queue_page_size = usize::from(rows[1].height).max(1);
     if app.queue.is_empty() {
-        let (title, hint) = if app.is_loading {
+        let (title, hint) = if app.queue_request.is_some() {
             ("Fetching your queue…", "Your music will appear here.")
         } else if app.queue_error.is_some() {
             (
@@ -248,14 +265,17 @@ fn render_queue(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, track)| {
-            let clean = single_line(track, app);
-            let (title, artist) = clean.rsplit_once(" - ").unwrap_or((&clean, ""));
+            let clean = single_line(&track.label(), app);
+            let (title, artist) = (track.title.as_str(), track.artist.as_str());
             let title = fit_text(if artist_width == 0 { &clean } else { title }, title_width);
             let padding =
                 usize::from(title_width).saturating_sub(Line::from(title.as_str()).width());
             let mut spans = vec![
                 Span::styled(
-                    format!("{:>3}  ", i + 1),
+                    format!(
+                        "{:>3}  ",
+                        app.queue_offset.saturating_add(i).saturating_add(1)
+                    ),
                     Style::default().fg(theme.text_secondary),
                 ),
                 Span::styled(title, Style::default().fg(theme.text())),
@@ -281,13 +301,21 @@ fn render_queue(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
             .bold(),
     );
     f.render_stateful_widget(list, rows[1], &mut app.queue_state);
-    let first = app.queue_state.offset() + 1;
-    let last = (app.queue_state.offset() + app.queue_page_size).min(app.queue.len());
+    let first = app
+        .queue_offset
+        .saturating_add(app.queue_state.offset())
+        .saturating_add(1);
+    let last = app.queue_offset.saturating_add(
+        app.queue_state
+            .offset()
+            .saturating_add(app.queue_page_size)
+            .min(app.queue.len()),
+    );
     let label = format!(
         "{first}–{last} of {} loaded  ·  {}",
         app.queue.len(),
         if focused {
-            "↑↓ browse · Enter adds music"
+            "↑↓ browse · Enter details"
         } else {
             "Tab to focus"
         }
@@ -298,7 +326,8 @@ fn render_queue(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     );
 }
 
-fn render_visualizer(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
+pub(super) fn render_visualizer(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
+    app.visualizer_visible = area.width >= 4 && area.height >= 4;
     let spec_block = panel(" Visualizer · spectrum ", theme, false);
 
     if app.current_track.is_some() && app.spectrogram.is_some() {

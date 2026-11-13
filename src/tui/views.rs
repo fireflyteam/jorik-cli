@@ -53,8 +53,8 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
         );
         f.render_widget(
             Paragraph::new(super::design::primary_action(
-                if app.is_loading { "Esc" } else { "Enter" },
-                if app.is_loading {
+                if app.auth_loading { "Esc" } else { "Enter" },
+                if app.auth_loading {
                     "cancel login"
                 } else {
                     "sign in"
@@ -64,7 +64,7 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
             rows[5],
         );
         f.render_widget(
-            Paragraph::new(if app.is_loading {
+            Paragraph::new(if app.auth_loading {
                 "q quit"
             } else if inner.width < 28 {
                 "? help · q quit"
@@ -78,7 +78,7 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
     }
 
     let has_status = app.auth_info_text.is_some();
-    let show_legacy = app.legacy_credentials && !app.is_loading;
+    let show_legacy = app.legacy_credentials && !app.auth_loading;
     // Gaps are independent layout rows, never an incidental side effect of wrapping.
     let rows = Layout::vertical([
         Constraint::Length(3), // title, blank line, short explanation
@@ -139,8 +139,8 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
     }
     f.render_widget(
         Paragraph::new(super::design::primary_action(
-            if app.is_loading { "Esc" } else { "Enter" },
-            if app.is_loading {
+            if app.auth_loading { "Esc" } else { "Enter" },
+            if app.auth_loading {
                 "Cancel login"
             } else {
                 "Sign in with Discord"
@@ -149,7 +149,7 @@ pub(super) fn welcome(f: &mut Frame, app: &App, theme: &Theme) {
         )),
         rows[6],
     );
-    let shortcuts = if app.is_loading {
+    let shortcuts = if app.auth_loading {
         vec![("q", "quit")]
     } else {
         vec![("\\", "change server"), ("?", "help"), ("q", "quit")]
@@ -258,7 +258,7 @@ pub(super) fn settings(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     ])
     .split(inner);
     f.render_widget(
-        Paragraph::new("Make this space yours.").style(Style::default().fg(theme.text()).bold()),
+        Paragraph::new("Preferences").style(Style::default().fg(theme.text()).bold()),
         rows[0],
     );
     let fields = [
@@ -411,8 +411,8 @@ pub(super) fn settings(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 "The visualizer needs spectrum data from the server. It yields to your queue in smaller terminals. Toggle it with v on the player.",
             ),
             SettingsField::Layout => (
-                "Room to breathe",
-                "Standard balances queue and spectrum. Sidebar emphasizes spectrum. Studio stacks panels. Zen expands spectrum; Tab brings the queue back.",
+                "Player layout",
+                "Desk shows playback, session, artwork and queue. Queue uses the full width. Press v on the player for visualization. Sidebar, Studio and Zen remain available.",
             ),
         };
         f.render_widget(
@@ -449,9 +449,13 @@ pub(super) fn lyrics(f: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
         Constraint::Length(1),
     ])
     .split(inner);
-    let track = app.current_track.as_deref().unwrap_or("Nothing playing");
+    let track = app
+        .current_track
+        .as_ref()
+        .map(Track::label)
+        .unwrap_or_else(|| "Nothing playing".into());
     f.render_widget(
-        Paragraph::new(fit_text(&single_line(track, app), inner.width))
+        Paragraph::new(fit_text(&single_line(&track, app), inner.width))
             .style(Style::default().fg(theme.highlight).bold()),
         rows[0],
     );
@@ -493,7 +497,11 @@ pub(super) fn track_input(f: &mut Frame, app: &App, theme: &Theme) {
         Paragraph::new(
             app.input_error
                 .as_deref()
-                .unwrap_or("Search for a song, or paste a track / playlist URL."),
+                .unwrap_or(if app.add_pending.is_some() {
+                    "Adding music… awaiting confirmation. Esc closes; the request is not cancelled."
+                } else {
+                    "Search for a song, or paste a track / playlist URL."
+                }),
         )
         .wrap(Wrap { trim: true })
         .style(Style::default().fg(if app.input_error.is_some() {
@@ -527,8 +535,28 @@ pub(super) fn track_input(f: &mut Frame, app: &App, theme: &Theme) {
     f.render_widget(
         Paragraph::new(Line::from(
             [
-                key_hint("Enter", "add to queue", theme),
-                key_hint("Esc", "discard", theme),
+                key_hint(
+                    if app.add_pending.is_some() {
+                        "…"
+                    } else {
+                        "Enter"
+                    },
+                    if app.add_pending.is_some() {
+                        "awaiting server"
+                    } else {
+                        "add to queue"
+                    },
+                    theme,
+                ),
+                key_hint(
+                    "Esc",
+                    if app.add_pending.is_some() {
+                        "close"
+                    } else {
+                        "discard"
+                    },
+                    theme,
+                ),
             ]
             .concat(),
         )),
@@ -551,7 +579,7 @@ pub(super) fn diagnostics(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         } else {
             "HTTP mode"
         },
-        app.pending_commands.len(),
+        app.pending_commands.len() + app.rest_commands.len(),
         app.debug_logs.len()
     );
     f.render_widget(
@@ -567,6 +595,50 @@ pub(super) fn diagnostics(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     f.render_widget(
         Paragraph::new(lines).style(Style::default().fg(theme.text_secondary)),
         rows[1],
+    );
+}
+
+pub(super) fn track_details(f: &mut Frame, app: &App, theme: &Theme) {
+    let area = popup_rect(76, 14, f.area());
+    prepare_modal(f, area, theme);
+    let block =
+        panel(" Selected track ", theme, true).padding(ratatui::widgets::Padding::new(2, 2, 1, 1));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let track = app.selected_track();
+    let Some(track) = track else {
+        f.render_widget(
+            Paragraph::new("This track is no longer in the queue.\nEsc returns to the player.")
+                .wrap(Wrap { trim: true }),
+            inner,
+        );
+        return;
+    };
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(single_line(&track.title, app))
+                .fg(theme.text())
+                .bold(),
+            Line::from(single_line(&track.artist, app)).fg(theme.artist()),
+            Line::from(""),
+            Line::from(format!(
+                "Album   {}",
+                single_line(track.album.as_deref().unwrap_or("Unknown album"), app)
+            ))
+            .fg(theme.album()),
+            Line::from(format!(
+                "Length  {}",
+                track
+                    .duration_ms
+                    .map(design::time_label)
+                    .unwrap_or_else(|| "Unknown".into())
+            ))
+            .fg(theme.length()),
+            Line::from(""),
+            Line::from("Esc  Back to player").fg(theme.highlight),
+        ])
+        .wrap(Wrap { trim: false }),
+        inner,
     );
 }
 
@@ -641,7 +713,7 @@ pub(super) fn account_info(f: &mut Frame, app: &App, theme: &Theme) {
     let area = popup_rect(76, 16, f.area());
     prepare_modal(f, area, theme);
     let block = panel(
-        if app.is_loading {
+        if app.auth_loading {
             " Account · working… "
         } else {
             " Account "
@@ -739,37 +811,5 @@ pub(super) fn about(f: &mut Frame, theme: &Theme) {
             .wrap(Wrap { trim: true })
             .block(panel(" About Jorik ", theme, true)),
         area,
-    );
-}
-
-pub(super) fn connection_error(f: &mut Frame, app: &App, theme: &Theme, message: &str) {
-    let area = popup_rect(74, 11, f.area());
-    prepare_modal(f, area, theme);
-    let block = panel(" Connection needs attention ", theme, true)
-        .border_style(Style::default().fg(theme.danger()));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let rows = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(0),
-        Constraint::Length(2),
-    ])
-    .split(inner);
-    f.render_widget(
-        Paragraph::new("Your session is still here.")
-            .style(Style::default().fg(theme.text()).bold()),
-        rows[0],
-    );
-    f.render_widget(
-        Paragraph::new(crate::output::safe_text(message, app.token.as_deref()))
-            .wrap(Wrap { trim: true })
-            .style(Style::default().fg(theme.text_secondary)),
-        rows[1],
-    );
-    f.render_widget(
-        Paragraph::new(Line::from(
-            [key_hint("r", "retry", theme), key_hint("q", "quit", theme)].concat(),
-        )),
-        rows[2],
     );
 }

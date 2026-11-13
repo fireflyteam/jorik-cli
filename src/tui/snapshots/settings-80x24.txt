@@ -1,8 +1,7 @@
-  JORIK     1 Player  2 Lyrics  3 Settings  4 Logs                      ● Live
-  example.com  /  Guild guild
- ──────────────────────────────────────────────────────────────────────────────
+   JORIK    example.com   Guild guild                               Connected
+    1 Player  2 Lyrics  3 Settings  4 Logs
  ╭ Settings ──────────────────────────────────────────────────────────────────╮
- │ Make this space yours.                                                     │
+ │ Preferences                                                                │
  │                                                                            │
  │ ▎ Server              https://example.com                                  │
  │                       HTTPS required outside loopback development.         │
@@ -12,13 +11,14 @@
  │                       Preview colors with ← →. Saved immediately.          │
  │   Visualizer          ‹ Bars ›                                             │
  │                       Choose the spectrum's visual style.                  │
- │   Layout              ‹ Standard ›                                         │
+ │   Layout              ‹ Desk ›                                             │
  │                       Extra panels adapt to available terminal space.      │
+ │                                                                            │
  │                                                                            │
  │                                                                            │
  │                                                                            │
  │ Enter edits text fields. Appearance changes save immediately.              │
  │                                                                            │
  ╰────────────────────────────────────────────────────────────────────────────╯
-  · Preferences · appearance saves immediately · server changes stay isolated
-  ↑↓  select   ←→  change   Enter  edit/done   Esc  back
+    · Preferences · appearance saves immediately · server changes stay isola…
+    ↑↓  select   ←→  change   Enter  edit/done   Esc  back

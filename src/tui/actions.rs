@@ -188,7 +188,7 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
         _ => None,
     };
     if let Some(action) = simple {
-        tokio::spawn(async_simple_command(
+        app.spawn(async_simple_command(
             app_arc,
             "/webhook/audio".to_string(),
             SimplePayload {
@@ -207,8 +207,11 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
                 Action::LoopQueue => "queue",
                 _ => "off",
             };
-            app.loop_mode = mode.to_string();
-            tokio::spawn(async_simple_command(
+            if app.pending_repeat().is_some() {
+                app.notify("A repeat request is already awaiting confirmation");
+                return false;
+            }
+            app.spawn(async_command(
                 app_arc,
                 "/webhook/audio".to_string(),
                 LoopPayload {
@@ -217,10 +220,11 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
                     user_id: app.user_id.clone(),
                     loop_mode: mode.to_string(),
                 },
+                CommandKind::Repeat(mode.into()),
             ));
         }
         Action::Mode247 => {
-            tokio::spawn(async_simple_command(
+            app.spawn(async_simple_command(
                 app_arc,
                 "/webhook/audio".to_string(),
                 TwentyFourSevenPayload {
@@ -237,10 +241,10 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
         }
         Action::Lyrics => {
             app.view = View::Lyrics;
-            tokio::spawn(async_fetch_lyrics(app_arc));
+            app.spawn(async_fetch_lyrics(app_arc));
         }
         Action::Turip => {
-            tokio::spawn(async_play_track(
+            app.spawn(async_play_track(
                 app_arc,
                 "https://open.spotify.com/track/2RQWB4Asy1rjZL4IUcJ7kn".to_string(),
             ));
@@ -255,7 +259,8 @@ pub(super) fn execute(action: Action, app: &mut App, app_arc: Arc<Mutex<App>>) -
         }
         Action::Refresh => {
             app.error_message = None;
-            tokio::spawn(async_fetch_queue(app_arc));
+            app.artwork.retry();
+            app.spawn(async_fetch_queue(app_arc));
         }
         Action::Visualizer => {
             app.visualizer_enabled = !app.visualizer_enabled;
@@ -324,9 +329,11 @@ pub(super) fn handle_palette_keys(
             app.menu_state.select(Some(0));
         }
         KeyCode::Char(c)
-            if !key
-                .modifiers
-                .intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) =>
+            if input_char(c)
+                && app.palette_query.len().saturating_add(c.len_utf8()) <= MAX_PALETTE_BYTES
+                && !key
+                    .modifiers
+                    .intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) =>
         {
             app.palette_query.push(c);
             app.menu_state.select(Some(0));
@@ -340,7 +347,7 @@ pub(super) fn handle_clear_keys(app: &mut App, key: event::KeyEvent, app_arc: Ar
     match key.code {
         KeyCode::Char('y' | 'Y') => {
             app.view = app.overlay_return;
-            tokio::spawn(async_simple_command(
+            app.spawn(async_simple_command(
                 app_arc,
                 "/webhook/audio".to_string(),
                 SimplePayload {

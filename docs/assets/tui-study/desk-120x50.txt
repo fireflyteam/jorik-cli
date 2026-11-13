@@ -1,0 +1,50 @@
+   JORIK                                                                                              Connected
+    1 Queue  2 Desk  3 Monitor   OFFLINE STUDY
+
+
+   PLAYING                                   Up next   20 loaded
+   Midnight City                                #  TITLE                   ARTIST            ALBUM             LENGTH
+   M83                                          1  Intro                   The xx            xx                2:07
+                                             >  2  Nightcall               Kavinsky          OutRun            4:18
+   Album  Hurry Up, We're Dreaming              3  A Real Hero             College           Drive             4:28
+   2:04   ─────────────────────  4:03           4  Teardrop                Massive Attack    Mezzanine         5:30
+                                                5  Roads                   Portishead        Dummy             5:02
+                                                6  All I Need              Air               Moon Safari       4:28
+                                                7  Open Eye Signal         Jon Hopkins       Immunity          7:51
+                                                8  Archangel               Burial            Untrue            4:00
+   Session                                      9  Two Thousand and Seve…  Four Tet          New Energy        4:12
+                                               10  Kerala                  Bonobo            Migration         3:57
+   Server     example.com                      11  Gosh                    Jamie xx          In Colour         4:51
+   Guild      123456789012345678               12  Retrograde              James Blake       Overgrown         3:43
+   Transport  WebSocket                        13  Someone Great           LCD Soundsystem   Sound of Silver   6:25
+   Updated    Just now                         14  Everything In Its Rig…  Radiohead         Kid A             4:11
+   Repeat     Off                              15  Says                    Nils Frahm        Spaces            8:18
+                                               16  A Walk                  Tycho             Dive              5:16
+                                               17  Odessa                  Caribou           Swim              5:15
+                                               18  Your Hand In Mine       Explosions In T…  The Earth Is No…  8:17
+                                               19  Hoppipolla              Sigur Ros         Takk...           4:28
+                                               20  Outro                   M83               Hurry Up, We're…  4:07
+
+ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▀▀▄▄▄▀▄▄▄
+ ▄▄▄▄▄▀▀▀▀▀▀▀▀▀▄▄▄▄▄▄▄▄▄▄▄▄▀▀▀▀▀▀▀▀▄▄▀▄
+ ▄▄▄▄▄▄▀▀▀▀▄▄▄▄▀▀▄▀▀▀▀▄▄▄▄▄▄▄▀▀▄▀▀▀▀▀▀▄
+ ▄▄▀▀▀▀▄▄▄▄▄▄▄▄▄▄▀▀▄▀▀▀▄▀▄▀▄▄▄▄▄▄▄▄▀▀▄▀
+ ▄▄▄▄▄▄▄▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▀▀▄
+ ▄▄▄▄▄▄▄▄▄▄▄▄▄▀▄▄▄▀▀▄▄▄▄▄▄▄▄▄▄▄▄▀▀▀▄▄▄▄
+ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▀▄▄▄▄▀▄▄▄▄▄▄▀▄▄▄▄
+ ▄▄▄▄▄▄▀▄▄▄▄▀▀▀▀▀▀▀▀▄▄▄▄▄▀▀▀▄▄▀▀▄▄▄▄▄▄▄
+ ▄▄▄▄▄▄▀▄▀▀▀▄▄▀▄▄▀▀▄▄▀▀▀▀▄▀▄▄▄▄▄▄▀▄▀▄▄▄
+ ▄▄▄▄▀▀▄▀▀▀▄▀▀▄▀▀▀▀▄▄▀▄▄▄▄▄▀▄▀▀▀▀▀▄▄▄▄▀
+ ▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀▀▄▄▀▀▄▀▀▀▀▄▄▄▄▄▀▄▀▀▀▀▀▀
+ ▀▀▀▀▀▀▀▀▀▄▄▄▄▄▀▄▀▀▀▄▀▀▀▀▀▀▀▀▀▀▄▄▀▀▀▀▀▀
+ ▀▀▀▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▄▄▄▄▄▄▀▀▀▀▀▀▄▄▀▀▀
+ ▄▄▄▄▄▄▄▄▄▀▀▄▀▀▀▀▀▄▄▀▀▀▀▀▄▄▄▄▄▄▄▄▀▀▄▄▄▄
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀
+ ▀▀▀▀▀▀▀▄▄▀▄▄▄▀▄▄▀▄▄▀▄▀▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ▀▀▀▀▀▀▀▄▄▄▄▄▄▄▄▄▄▀▀▄▀▄▄▄▄▄▄▄▄▄▄▄▄▄▀▀ ▀
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ▄▄▄▄▄▄▄▄▄▄▀▀▀▄▄▀▀▀▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀ ▀▀▀▀
+ ▀▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+
+   Showing 1–20 of 20 loaded tracks. Total unavailable.
+   a Add  Enter Details  Space Pause  : Actions  ? Help  q Quit

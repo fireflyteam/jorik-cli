@@ -3,7 +3,7 @@ use ratatui::{Terminal, backend::TestBackend};
 use serde_json::json;
 
 pub(super) fn app() -> App {
-    App::new(
+    let mut fixture = App::new(
         Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
@@ -18,7 +18,10 @@ pub(super) fn app() -> App {
         Some("secret-token".to_string()),
         Some("guild".to_string()),
         None,
-    )
+    );
+    // Rendering fixtures must not depend on the developer/CI terminal environment.
+    fixture.monochrome = false;
+    fixture
 }
 
 #[test]
@@ -71,7 +74,7 @@ fn pending_commands_wait_for_their_own_acknowledgement() {
 fn successful_commands_clear_pending_state() {
     let mut app = app();
     app.pending_commands
-        .insert("cmd-1".to_string(), Instant::now());
+        .insert("cmd-1".to_string(), Instant::now().into());
     let event = serde_json::from_value(json!({
         "type": "action_response", "id": "cmd-1", "success": true
     }))
@@ -97,14 +100,14 @@ fn timeouts_and_disconnects_report_uncertain_command_outcomes() {
     let mut app = app();
     app.pending_commands.insert(
         "expired".to_string(),
-        Instant::now() - Duration::from_secs(11),
+        (Instant::now() - Duration::from_secs(11)).into(),
     );
     app.update_realtime();
     assert!(app.pending_commands.is_empty());
     assert!(app.error_message.as_deref().unwrap().contains("timed out"));
 
     app.pending_commands
-        .insert("pending".to_string(), Instant::now());
+        .insert("pending".to_string(), Instant::now().into());
     app.ws_connected = true;
     app.disconnect_ws();
     assert!(app.pending_commands.is_empty());
@@ -138,7 +141,7 @@ fn escape_discards_text_settings_without_saving() {
 }
 
 #[test]
-fn quitting_works_from_fatal_errors_without_intercepting_text_input() {
+fn quitting_does_not_intercept_editors_even_during_connection_errors() {
     let mut app = app();
     let quit = event::KeyEvent::new(KeyCode::Char('q'), event::KeyModifiers::NONE);
     let interrupt = event::KeyEvent::new(KeyCode::Char('c'), event::KeyModifiers::CONTROL);
@@ -148,8 +151,8 @@ fn quitting_works_from_fatal_errors_without_intercepting_text_input() {
     assert!(should_quit(&app, interrupt));
     app.view = View::Settings;
     app.is_settings_editing = true;
-    app.fatal_error = Some("Join a voice channel".to_string());
-    assert!(should_quit(&app, quit));
+    app.queue_error = Some("Join a voice channel".to_string());
+    assert!(!should_quit(&app, quit));
     assert!(should_quit(&app, interrupt));
 }
 
@@ -184,7 +187,7 @@ fn input_tail_uses_display_cells() {
 #[test]
 fn every_visualizer_and_layout_handles_small_terminals() {
     let mut app = app();
-    app.current_track = Some("Title - Artist".to_string());
+    app.current_track = Some("Title - Artist".into());
     app.duration_ms = 60_000;
     app.spectrogram = Some(vec![vec![100; 64]]);
     app.focus = PlayerFocus::Playback;
@@ -226,7 +229,7 @@ fn unicode_input_cursor_stays_inside_the_terminal() {
 #[test]
 fn errors_do_not_replace_the_cached_queue() {
     let mut app = app();
-    app.queue = vec!["Cached track".to_string()];
+    app.queue = vec!["Cached track".into()];
     app.error_message = Some("Command rejected".to_string());
     let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
     terminal.draw(|frame| ui(frame, &mut app)).unwrap();
@@ -269,7 +272,7 @@ async fn http_command_failures_are_visible() {
     )
     .await;
     let app = app.lock().await;
-    assert!(!app.is_loading);
+    assert!(!app.is_busy());
     assert!(app.error_message.as_deref().unwrap().contains("403"));
     assert!(
         app.error_message
@@ -283,18 +286,18 @@ async fn http_command_failures_are_visible() {
 async fn malformed_queue_responses_are_visible_without_losing_cached_tracks() {
     let mut app = app();
     app.base_url = mock_response("200 OK", "not json").await;
-    app.queue = vec!["Cached track".to_string()];
+    app.queue = vec!["Cached track".into()];
     let app = Arc::new(Mutex::new(app));
     async_fetch_queue(app.clone()).await;
     let app = app.lock().await;
-    assert!(!app.is_loading);
+    assert!(!app.is_busy());
     assert!(
         app.queue_error
             .as_deref()
             .unwrap()
             .contains("Invalid server response")
     );
-    assert_eq!(app.queue, ["Cached track"]);
+    assert_eq!(app.queue[0].title, "Cached track");
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ fn untrusted_metadata_and_logs_are_scrubbed_and_elapsed_time_saturates() {
     let mut app = app();
     app.token = Some("secret".into());
     app.parse_queue_response(&serde_json::json!({"current":{"title":"title\u{001b}]52;c;payload\u{0007}\u{202e} secret","author":"Artist"}, "upcoming":[]}));
-    let track = app.current_track.as_ref().unwrap();
+    let track = app.current_track.as_ref().unwrap().label();
     assert!(
         !track.contains("secret") && !track.contains('\u{001b}') && !track.contains('\u{202e}')
     );
@@ -19,7 +19,7 @@ fn untrusted_metadata_and_logs_are_scrubbed_and_elapsed_time_saturates() {
     app.update_realtime();
     assert_eq!(app.elapsed_ms, u64::MAX);
     app.pending_commands
-        .insert("cmd-test".into(), Instant::now());
+        .insert("cmd-test".into(), Instant::now().into());
     let event: WsEvent = serde_json::from_value(serde_json::json!({"type":"action_response","id":"cmd-test","success":false,"error":{"token":"another-secret","message":"secret"}})).unwrap();
     app.finish_ws_action(&event);
     let error = app.error_message.as_ref().unwrap();
@@ -84,7 +84,7 @@ fn cancellation_and_quit_invalidate_pending_login_generations() {
         app.login_cancel = Some(cancel.clone());
         app.login_generation = 7;
         app.view = View::AuthResult;
-        app.is_loading = true;
+        app.auth_loading = true;
         let shared = Arc::new(Mutex::new(self::app()));
         handle_key_event(
             &mut app,
@@ -94,7 +94,7 @@ fn cancellation_and_quit_invalidate_pending_login_generations() {
         assert!(cancel.is_cancelled());
         assert!(app.login_cancel.is_none());
         assert_eq!(app.login_generation, 8);
-        assert!(!app.is_loading);
+        assert!(!app.auth_loading);
         assert_eq!(app.token.as_deref(), Some("secret-token")); // Cancelling re-login preserves the current session.
     }
 }
@@ -117,12 +117,12 @@ fn repeated_login_attempts_and_login_during_signout_do_not_spawn_work() {
 #[test]
 fn clearing_a_session_discards_tokens_cached_tracks_and_pending_actions() {
     let mut app = app();
-    app.queue = vec!["Private track".to_string()];
-    app.current_track = Some("Private current track".to_string());
+    app.queue = vec!["Private track".into()];
+    app.current_track = Some("Private current track".into());
     app.spectrogram = Some(vec![vec![50]]);
     app.ws_connected = true;
     app.pending_commands
-        .insert("pending".to_string(), Instant::now());
+        .insert("pending".to_string(), Instant::now().into());
     app.error_message = Some("Private old-server error".to_string());
     app.auth_info_text = Some("Private profile".to_string());
     app.debug_logs.push("Old server events".to_string());

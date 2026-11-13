@@ -32,22 +32,11 @@ fn screen(app: &mut App, width: u16, height: u16) -> String {
 
 #[test]
 fn compact_player_snapshot() {
-    let mut app = app();
-    app.ws_connected = true;
-    app.current_track = Some("Midnight City - M83".to_string());
-    app.paused = false;
-    app.has_playback_state = true;
-    app.elapsed_ms = 124_000;
-    app.duration_ms = 244_000;
-    app.queue = vec![
-        "Intro - The xx".to_string(),
-        "Nightcall - Kavinsky".to_string(),
-        "A Real Hero - College".to_string(),
-    ];
+    let mut app = super::polish_tests::playing();
     let actual = screen(&mut app, 80, 24);
     super::polish_tests::assert_snapshot("player-80x24", &actual);
     assert!(actual.contains("Midnight City"));
-    assert!(actual.contains("Queue · 3 tracks"));
+    assert!(actual.contains("Queue   3 loaded"));
     assert!(actual.contains("Space") && actual.contains("pause"));
     assert!(!actual.contains("Visualizer"));
 }
@@ -60,6 +49,8 @@ fn visualizer_yields_to_queue_on_narrow_or_short_screens() {
         assert!(actual.contains("Queue"));
         assert!(!actual.contains("Visualizer"));
     }
+    assert!(!screen(&mut app, 120, 32).contains("Visualizer"));
+    app.visualizer_enabled = true;
     assert!(screen(&mut app, 120, 32).contains("Visualizer"));
     app.visualizer_enabled = false;
     assert!(!screen(&mut app, 120, 32).contains("Visualizer"));
@@ -69,6 +60,7 @@ fn visualizer_yields_to_queue_on_narrow_or_short_screens() {
 fn zen_mode_exposes_queue_when_queue_is_focused() {
     let mut app = app();
     app.layout = "Zen".to_string();
+    app.visualizer_enabled = true;
     app.focus = PlayerFocus::Playback;
     assert!(!screen(&mut app, 80, 24).contains("Queue ·"));
     press(&mut app, KeyCode::Tab);
@@ -78,7 +70,9 @@ fn zen_mode_exposes_queue_when_queue_is_focused() {
 #[test]
 fn queue_navigation_scrolls_and_clamps_to_available_rows() {
     let mut app = app();
-    app.queue = (1..=100).map(|i| format!("Track {i:03}")).collect();
+    app.queue = (1..=100)
+        .map(|i| Track::from(format!("Track {i:03}")))
+        .collect();
     screen(&mut app, 80, 24);
     press(&mut app, KeyCode::End);
     assert_eq!(app.queue_state.selected(), Some(99));
@@ -167,7 +161,7 @@ fn palette_dispatches_a_typed_action() {
     press(&mut app, KeyCode::Char(':'));
     handle_paste(&mut app, "visualizer");
     press(&mut app, KeyCode::Enter);
-    assert!(!app.visualizer_enabled);
+    assert!(app.visualizer_enabled);
     assert!(app.view == View::Main);
     assert!(app.notice.is_some());
 }
@@ -221,7 +215,7 @@ fn updates_do_not_steal_focus_or_input() {
 #[test]
 fn escape_dismisses_notifications_without_losing_queue_focus() {
     let mut app = app();
-    app.queue = vec!["A track".to_string()];
+    app.queue = vec!["A track".into()];
     app.queue_state.select(Some(0));
     app.error_message = Some("Rejected".to_string());
     app.offer_update(("v9.0.0".to_string(), vec![]));

@@ -9,16 +9,12 @@ powerful "remote" for Jorik Systems based Snail bot (also WIP)
 
 ## Releases
 
-The stable release is **0.4.2**. This development branch is **0.5.0-dev.1**, not yet released.
-See [CHANGELOG.md](CHANGELOG.md) for implemented hardening and remaining release-validation gates.
+The stable release is **0.5.0**.
+See [CHANGELOG.md](CHANGELOG.md) for the new player, login and update hardening.
 
-## Installing 0.5 builds
+## Installing 0.5.0
 
-Until an attested 0.5 release exists, build this development branch with
-`cargo build --release --locked`. The hardened bootstrap intentionally refuses
-older, unattested releases; it never falls back to running a downloaded script.
-
-From a trusted local checkout, once a 0.5 release is published:
+From a trusted local checkout:
 
 ```sh
 bash installer/install.sh --tag v0.5.0 --dest "$HOME/.local/bin/jorik"
@@ -39,14 +35,25 @@ and `curl | bash` installation are unsupported.
 
 *Deterministic UI preview with sample data; no live account or server content.*
 
-The 0.5 player uses layered dark surfaces, rounded panels, readable title/artist
-columns, explicit focus rings, and context-aware keyboard hints. Wide terminals
-also show the spectrum; compact terminals prioritize playback and queue browsing.
-Dialogs keep your place in the underlying screen and return there when dismissed.
-Small text uses higher-contrast colors; the welcome screen keeps migration details
-under `?` help rather than replacing the sign-in instructions. The sign-in card
-uses separate, padded sections for the server, primary action, shortcuts, and
-legacy notice; repeated onboarding steps are kept off this screen.
+Production renderer previews: [120×32](docs/assets/tui-player-wide.png) and
+[120×50](docs/assets/tui-player-tall.png).
+
+The 0.5 player opens in **Desk**: playback and session details on the left,
+artwork at the bottom left, and a queue with title, artist, album and length.
+The slate background, padded surfaces, alternating rows and violet selection
+match the design study. At 80×24 the queue uses two lines per track; larger
+terminals show all metadata in columns. Smaller terminals use a stacked player.
+Dialogs preserve your position in the queue. Press `v` for visualization.
+
+Artwork loads asynchronously, uses Lanczos antialiasing, and supports terminal
+graphics with a colored half-block fallback. Missing artwork and metadata are
+shown explicitly. The current paired backend supplies `thumbnail` and
+`durationMs`; album names require an API `album` or `albumName` field and show
+“Unknown album” when absent. Image requests never carry the API bearer token.
+Artwork detection never reads keyboard input: unrecognized terminals use half-blocks.
+For a compatible terminal, `JORIK_ARTWORK_PROTOCOL=kitty`, `sixel`, `iterm2`, or
+`halfblocks` explicitly selects the renderer. `NO_COLOR=1` uses terminal-default
+monochrome styling and disables artwork.
 
 ```sh
 cargo run -- tui
@@ -60,17 +67,23 @@ Override it with `--base-url`, `JORIK_BASE_URL`, or TUI settings.
 Saved settings pointing to the retired `jorik.xserv.pp.ua` default are migrated
 on load; custom hosts and explicit overrides remain unchanged.
 
-The header shows the server, guild, and WebSocket status; REST remains the fallback.
+The header shows connection status; the Desk session panel shows server and
+guild. REST remains the fallback when WebSocket is unavailable. Transport and
+playback freshness are separate: after 30 seconds without a playback snapshot,
+the timer stops and shows **Stale**. Press `r` to refresh. Repeat mode is shown
+only after server confirmation; requested changes are labeled pending.
 
 ### Controls
 
 | Key | Action |
 | --- | --- |
 | Space / p | Pause or resume |
-| / / Enter | Add a track or URL |
+| a or / | Add a track or URL |
+| Enter | Inspect the selected queue track, or current track when playback is focused |
 | Tab / Shift+Tab | Switch playback and queue focus |
 | ↑↓ / j k | Select and scroll queue rows |
-| PageUp / PageDown, Home / End | Page through the queue, or jump to its ends |
+| PageUp / PageDown, Home / End | Browse loaded rows, or jump to their ends |
+| [ / ] | Fetch the previous / next server queue page (20 tracks) |
 | : / Ctrl+p | Search all actions |
 | ? | Keyboard help |
 | s / w / l | Skip / stop / cycle loop mode |
@@ -86,19 +99,38 @@ Track input supports cursor movement, Home/End, Delete/Backspace, bracketed past
 and Ctrl+u to clear. Settings text fields support the same cursor editing and
 paste behavior; Enter saves and Escape discards the draft. Appearance changes
 preview and save immediately. Blank track submissions stay open with inline
-feedback instead of silently closing. Lyrics support PageUp/PageDown, Home/End,
-and refresh, and are invalidated when the track changes.
+feedback instead of silently closing. Add music keeps your query until the server
+accepts it; failures remain editable. Escape closes a pending request without
+cancelling it. If it later fails, `a` restores its query. Unconfirmed actions are
+never retried automatically: refresh before retrying to avoid duplicates.
 
-The player adapts to the terminal: an 80×24 window prioritizes playback and queue;
-wide, tall windows can also show visualization. Zen remains a presentation mode;
-switching focus to the queue makes queue navigation visible again. Visualization
-visibility is a session preference; theme and layout settings remain persistent.
+Input is bounded (8192 bytes for music, 2048 for server URLs, 256 for action
+search). Truncated music requests and server URLs cannot be submitted until edited.
+Cursor editing respects graphemes, including combining accents and joined emoji.
+Lyrics support PageUp/PageDown, Home/End, and refresh, and are invalidated when the
+track changes.
 
-Queue selection currently navigates the loaded rows; it does not play, remove,
-or reorder tracks. Updates appear as dismissible notices rather than interrupting
-the active screen. Tab now changes focus; use `:` for the former menu.
+Existing Standard preferences open Desk. Queue, Sidebar, Studio and Zen layouts
+remain available in settings; Zen reveals the queue when queue focus is selected.
+Visualization visibility is a session preference; theme and layout remain saved.
 
-## Authentication: 0.5 development
+The [TUI design study](docs/tui-design-study.md) records the design decisions and
+follow-up work. Try its offline native
+prototype with `cargo run --locked --example tui_study`; all actions are simulated.
+
+Queue selection supports navigation and local details; it does not play, remove,
+or reorder tracks. Counts distinguish loaded rows from the server's total; `[ ]`
+fetch other pages without confusing page-zero broadcasts with the page you are
+browsing. Connection errors preserve cached tracks and leave Settings, Account,
+and Help accessible. Updates appear as dismissible notices. Use `:` to search
+actions.
+
+Input wakes the UI immediately; background completions trigger prompt, coalesced
+redraws. Idle screens refresh once a second for timestamps; a visible, active
+spectrum renders at up to 30 fps.
+Quitting cancels session work and restores terminal modes, including bracketed paste.
+
+## Authentication
 
 Saved credentials use **Windows Credential Manager**, **macOS Keychain**, or an
 unlocked **Secret Service** provider on Linux. The provider must be available;
@@ -158,18 +190,18 @@ loopback. It exchanges that code and its private verifier at
 Bearer credentials arrive in a bounded, validated JSON body, never in the
 browser return URL.
 
-The paired backend change is on `security/cli-oauth-0.5.0` in the bot repository.
-It validates one-time Discord OAuth state and an independent HttpOnly browser
-cookie, using Secure host-only `__Host-` cookies in production. CLI codes expire
+The paired backend validates one-time Discord OAuth state and an independent
+HttpOnly browser cookie, using Secure host-only `__Host-` cookies in production. CLI codes expire
 after 60 seconds and can be redeemed once with the correct verifier. New user
 tokens expire after 30 days. This is native-grant PKCE, not a claim that Discord
 itself supports PKCE. Register the public **backend** `/oauth/callback` URL in the
 Discord Developer Portal, not the ephemeral CLI address.
 
 Callback pages contain no third-party resources, disable caching/referrers and
-remove sensitive queries from the address bar. Backend rollout and live Discord
-consent/cancel/retry validation are still required before release. A successful
-local protocol test with a fake Discord identity does not prove deployed OAuth.
+remove sensitive queries from the address bar. The paired backend is deployed at
+`https://jorik.gleckson.com`; the maintainer confirmed live Discord consent,
+denial, cancellation/retry, sign-out and server-switching validation for 0.5.0.
+Custom servers must deploy the paired protocol before using CLI 0.5 login.
 
 An opt-in native-store test creates and removes a random test-only credential.
 Run it only with an unlocked OS store; normal tests use an isolated fake store:

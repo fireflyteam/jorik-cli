@@ -1,0 +1,24 @@
+   JORIK   example.com   Guild 123456789012345678             Connected
+    1 Queue  2 Desk  3 Monitor   OFFLINE STUDY
+   PLAYING  Midnight City
+   M83
+   2:04   ─────────────────────────────────────────────────────────────  4:03
+   ──────────────────────────────────────────────────────────────────────────
+      ┌ Selected track ──────────────────────────────────────────────────┐
+   Up │                                                                  │
+      │  Nightcall                                                       │GTH
+      │  Kavinsky                                                        │7
+   >  │  OutRun                                                          │8
+      │  4:18                                                            │8
+      │                                                                  │0
+      │  This track can currently be inspected only.                     │2
+      │  Esc Back to queue                                               │8
+      │                                                                  │1
+      │                                                                  │0
+      └──────────────────────────────────────────────────────────────────┘2
+     10  Kerala                   Bonobo            Migration          3:57
+     11  Gosh                     Jamie xx          In Colour          4:51
+     12  Retrograde               James Blake       Overgrown          3:43
+
+   Showing 1–12 of 20 loaded tracks. Total unavailable.
+   a Add  Enter Details  Space Pause  : Actions  ? Help  q Quit

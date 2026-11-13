@@ -2,46 +2,47 @@ use super::design::{fit_text, key_hint, panel, prepare_modal, single_line};
 use super::*;
 
 pub(super) fn render_header(f: &mut Frame, app: &App, theme: &Theme, view: View, area: Rect) {
-    let narrow = area.width < 64;
+    f.render_widget(Block::default().bg(theme.chrome()), area);
+    let area = super::design::padded(area, 2.min(area.width / 4), 0);
+    if area.is_empty() {
+        return;
+    }
     let (connection, color) = if app.token.is_none() {
-        ("○ Sign in", theme.text_secondary)
+        ("Sign in", theme.text_secondary)
     } else if app.ws_connected {
-        ("● Live", theme.success())
+        ("Connected", theme.success())
     } else if app.ws_connecting {
-        ("◌ Connecting", theme.warning())
+        ("Connecting", theme.warning())
     } else {
-        ("○ HTTP mode", theme.text_secondary)
+        ("HTTP mode", theme.text_secondary)
     };
-    let row = Rect::new(area.x, area.y, area.width, 1.min(area.height));
     let columns = Layout::horizontal([
-        Constraint::Length(10),
+        Constraint::Length(9),
         Constraint::Min(0),
-        Constraint::Length(15),
+        Constraint::Length(12),
     ])
-    .split(row);
+    .split(Rect::new(area.x, area.y, area.width, 1));
+    f.render_widget(Paragraph::new("JORIK").fg(theme.text()).bold(), columns[0]);
+    if !(view == View::Main && app.layout == "Desk" && area.width >= 74) {
+        let host = Url::parse(&app.base_url)
+            .map(|url| url[url::Position::BeforeHost..url::Position::AfterPort].to_owned())
+            .unwrap_or_default();
+        let context = match &app.guild_id {
+            Some(guild) => format!("{host}   Guild {guild}"),
+            None => host,
+        };
+        f.render_widget(
+            Paragraph::new(fit_text(&single_line(&context, app), columns[1].width))
+                .fg(theme.text_secondary),
+            columns[1],
+        );
+    }
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" J", Style::default().fg(theme.highlight).bold()),
-            Span::styled("ORIK ", Style::default().fg(theme.text()).bold()),
-        ])),
-        columns[0],
-    );
-    f.render_widget(
-        Paragraph::new(format!("{connection} "))
+        Paragraph::new(connection)
             .alignment(Alignment::Right)
-            .style(Style::default().fg(color)),
+            .fg(color),
         columns[2],
     );
-    let nav_area = if narrow {
-        Rect::new(
-            area.x,
-            area.y.saturating_add(2),
-            area.width,
-            area.height.saturating_sub(2).min(1),
-        )
-    } else {
-        columns[1]
-    };
     let mut nav = Vec::new();
     for (tab, label) in [
         (View::Main, "1 Player"),
@@ -54,47 +55,41 @@ pub(super) fn render_header(f: &mut Frame, app: &App, theme: &Theme, view: View,
             format!(" {label} "),
             Style::default()
                 .fg(if active {
-                    theme.text()
+                    theme.highlight
                 } else {
                     theme.text_secondary
                 })
-                .bg(if active { theme.selection() } else { theme.bg }),
+                .bg(if active {
+                    theme.selection()
+                } else {
+                    theme.chrome()
+                })
+                .add_modifier(if active && app.monochrome {
+                    Modifier::BOLD | Modifier::UNDERLINED
+                } else {
+                    Modifier::empty()
+                }),
         ));
     }
-    f.render_widget(Paragraph::new(Line::from(nav)), nav_area);
     if area.height > 1 {
-        let host = Url::parse(&app.base_url)
-            .map(|url| url[url::Position::BeforeHost..url::Position::AfterPort].to_string())
-            .unwrap_or_else(|_| "Invalid server".into());
-        let context = if let Some(guild) = &app.guild_id {
-            format!(" {host}  /  Guild {guild}")
-        } else {
-            format!(" {host}  /  Join a voice channel to begin")
-        };
         f.render_widget(
-            Paragraph::new(fit_text(&single_line(&context, app), area.width))
-                .style(Style::default().fg(theme.text_secondary)),
+            Paragraph::new(Line::from(nav)),
             Rect::new(area.x, area.y + 1, area.width, 1),
-        );
-    }
-    if !narrow && area.height > 2 {
-        f.render_widget(
-            Paragraph::new("─".repeat(usize::from(area.width)))
-                .style(Style::default().fg(theme.border)),
-            Rect::new(area.x, area.y + 2, area.width, 1),
         );
     }
 }
 
 pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    f.render_widget(Block::default().bg(theme.chrome()), area);
+    let area = super::design::padded(area, 2.min(area.width / 4), 0);
     let error = app.error_message.as_ref().or(app.queue_error.as_ref());
     let (badge, status, color) = if let Some(error) = error {
         (
             " ! ",
             format!(
-                "{error} · Esc dismiss{}",
+                "{}Esc dismiss · {error}",
                 if app.queue_error.is_some() {
-                    " · r retry"
+                    "r retry · "
                 } else {
                     ""
                 }
@@ -112,12 +107,12 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
             ),
             theme.highlight,
         )
-    } else if !app.pending_commands.is_empty() {
+    } else if !app.pending_commands.is_empty() || !app.rest_commands.is_empty() {
         (
             " … ",
             format!(
                 "Waiting for {} command confirmation(s)…",
-                app.pending_commands.len()
+                app.pending_commands.len() + app.rest_commands.len()
             ),
             theme.highlight,
         )
@@ -126,6 +121,12 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
             " … ",
             "Fetching data… you can keep navigating".into(),
             theme.highlight,
+        )
+    } else if app.view == View::Main && app.playback_is_stale() {
+        (
+            " ! ",
+            "Playback state is stale · r refresh".into(),
+            theme.warning(),
         )
     } else if app.view == View::Settings {
         (
@@ -154,16 +155,33 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
             theme.text_secondary,
         )
     } else {
-        let focus = if app.focus == PlayerFocus::Queue {
-            "Queue"
+        let status = if app.queue.is_empty() {
+            "Queue empty".into()
         } else {
-            "Playback"
+            let first = app
+                .queue_offset
+                .saturating_add(app.queue_state.offset())
+                .saturating_add(1);
+            let last = app.queue_offset.saturating_add(
+                app.queue_state
+                    .offset()
+                    .saturating_add(app.queue_page_size)
+                    .min(app.queue.len()),
+            );
+            let total = app
+                .queue_total
+                .map(|total| format!("   {total} in queue"))
+                .unwrap_or_else(|| "   Total unavailable".into());
+            if app.queue_offset > 0 {
+                format!("Showing {first}–{last}{total}   [ ] queue pages")
+            } else {
+                format!(
+                    "Showing {first}–{last} of {} loaded tracks{total}",
+                    app.queue.len()
+                )
+            }
         };
-        (
-            " · ",
-            format!("{focus} focus · Tab switches panels · Queue selection is browsing only"),
-            theme.text_secondary,
-        )
+        (" · ", status, theme.text_secondary)
     };
     let badge_width = 3.min(area.width);
     let status = fit_text(
@@ -185,6 +203,7 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
         View::Menu => &[("↑↓", "select"), ("Enter", "run"), ("Esc", "close")],
         View::Help => &[("↑↓", "scroll"), ("Esc", "close")],
         View::ConfirmClear => &[("y", "clear"), ("Esc", "keep queue")],
+        View::TrackDetails => &[("Esc", "back to queue")],
         View::Settings if app.is_settings_editing => &[
             ("Enter", "save"),
             ("Esc", "discard"),
@@ -212,7 +231,7 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
             &[("Enter", "add"), ("Esc", "discard"), ("←→", "cursor")]
         }
         View::Main if app.current_track.is_none() => &[
-            ("/", "add music"),
+            ("a", "add music"),
             (":", "actions"),
             ("?", "help"),
             ("q", "quit"),
@@ -220,8 +239,8 @@ pub(super) fn render_footer(f: &mut Frame, app: &App, theme: &Theme, area: Rect)
         _ if area.width < 64 => &[("/", "add"), (":", "actions"), ("?", "help"), ("q", "quit")],
         _ => &[
             ("Space", playback_hint),
-            ("/", "add"),
-            ("Tab", "focus"),
+            ("a", "add"),
+            ("Enter", "details"),
             (":", "actions"),
             ("?", "help"),
             ("q", "quit"),
@@ -351,7 +370,8 @@ pub(super) fn render_help(f: &mut Frame, app: &mut App, theme: &Theme) {
     let text = [
         "PLAYBACK",
         "Space / p       Pause or resume",
-        "/ / Enter       Add music: search or paste a URL",
+        "a or /          Add music: song name or URL",
+        "Enter           Inspect the selected track",
         "s / w / l       Skip / stop / cycle loop mode",
         "c               Clear upcoming tracks (asks first)",
         "r               Refresh queue",
@@ -360,8 +380,9 @@ pub(super) fn render_help(f: &mut Frame, app: &mut App, theme: &Theme) {
         "QUEUE",
         "Tab / Shift+Tab Move focus between panels",
         "↑↓ / j k        Browse loaded tracks",
-        "PageUp/PageDown Browse one page",
+        "PageUp/PageDown Browse one screen of loaded tracks",
         "Home / End      First / last loaded track",
+        "[ / ]           Previous / next server queue page",
         "Selection does not play, remove, or reorder a track.",
         "",
         "NAVIGATION",
@@ -412,7 +433,9 @@ pub(super) fn render_clear_confirmation(f: &mut Frame, app: &App, theme: &Theme)
     f.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                format!("Remove {} loaded upcoming track(s)?", app.queue.len()),
+                app.queue_total
+                    .map(|total| format!("Remove all {total} upcoming tracks?"))
+                    .unwrap_or_else(|| "Remove all upcoming tracks? Total unavailable.".into()),
                 Style::default().fg(theme.text()).bold(),
             )),
             Line::from(Span::styled(

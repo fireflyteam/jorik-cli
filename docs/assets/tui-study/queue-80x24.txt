@@ -1,0 +1,24 @@
+   JORIK   example.com   Guild 123456789012345678             Connected
+    1 Queue  2 Desk  3 Monitor   OFFLINE STUDY
+   PLAYING  Midnight City
+   M83
+   2:04   ─────────────────────────────────────────────────────────────  4:03
+   ──────────────────────────────────────────────────────────────────────────
+
+   Up next   20 loaded
+      #  TITLE                    ARTIST            ALBUM              LENGTH
+      1  Intro                    The xx            xx                 2:07
+   >  2  Nightcall                Kavinsky          OutRun             4:18
+      3  A Real Hero              College           Drive              4:28
+      4  Teardrop                 Massive Attack    Mezzanine          5:30
+      5  Roads                    Portishead        Dummy              5:02
+      6  All I Need               Air               Moon Safari        4:28
+      7  Open Eye Signal          Jon Hopkins       Immunity           7:51
+      8  Archangel                Burial            Untrue             4:00
+      9  Two Thousand and Seven…  Four Tet          New Energy         4:12
+     10  Kerala                   Bonobo            Migration          3:57
+     11  Gosh                     Jamie xx          In Colour          4:51
+     12  Retrograde               James Blake       Overgrown          3:43
+
+   Showing 1–12 of 20 loaded tracks. Total unavailable.
+   a Add  Enter Details  Space Pause  : Actions  ? Help  q Quit

@@ -20,6 +20,10 @@ jobs:
             echo '::error::Release tag must match Cargo.toml version'
             exit 1
           fi
+          if [[ "$GITHUB_REF_TYPE" == tag && ! -s "docs/releases/$VERSION.md" ]]; then
+            echo '::error::Release notes are required in docs/releases/<version>.md'
+            exit 1
+          fi
 
   quality:
     uses: ./.github/workflows/check.yml
@@ -180,4 +184,5 @@ jobs:
           fail_on_unmatched_files: true
           prerelease: ${{ env.IS_PRERELEASE }}
           name: Release v${{ env.VERSION }}
+          body_path: docs/releases/${{ env.VERSION }}.md
           generate_release_notes: true

@@ -1,0 +1,24 @@
+   JORIK                                                      Connected
+    1 Queue  2 Desk  3 Monitor   OFFLINE STUDY
+
+  PLAYING
+  Midnight City                         Up next   20 loaded
+  M83                                      #  TITLE                     LENGTH
+                                              ARTIST          ALBUM
+  Album  Hurry Up, We're Dreaming          1  Intro                     2:07
+  2:04   ───────────────────  4:03            The xx          xx
+                                        >  2  Nightcall                 4:18
+  Session                                     Kavinsky        OutRun
+  Server     example.com                   3  A Real Hero               4:28
+  Guild      123456789012345678               College         Drive
+  Repeat     Off                           4  Teardrop                  5:30
+                                              Massive Attack  Mezzanine
+ ▄▄▀▀▄▄▄▄▀▀▀                               5  Roads                     5:02
+ ▄▄▄▄▀▀▄▄▄▀▄                                  Portishead      Dummy
+ ▄▄▀▄▄▄▀▄▄▄▄                               6  All I Need                4:28
+ ▀▀▀▀▀▀▀▀▀▀▀                                  Air             Moon Safari
+ ▀▀▄▄▄▄▄▀▄▄▀
+ ▀▄▀▀▀▄▄▄▄▄▄
+
+   Showing 1–6 of 20 loaded tracks. Total unavailable.
+   a Add  Enter Details  Space Pause  : Actions  ? Help  q Quit

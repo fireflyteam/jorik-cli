@@ -1,0 +1,32 @@
+   JORIK                                                                                              Connected
+    1 Queue  2 Desk  3 Monitor   OFFLINE STUDY
+
+
+   IDLE                                      Up next   0 loaded
+   No track playing                             #  TITLE                   ARTIST            ALBUM             LENGTH
+   Press a to add music                      Queue empty. Press a to add a song name or URL.
+
+   Album  Unavailable
+   --:--  ───────────────────── --:--
+
+
+
+
+   Session
+
+   Server     example.com
+   Guild      123456789012345678
+   Transport  WebSocket
+   Updated    Just now
+   Repeat     Off
+
+
+
+
+
+
+
+
+
+   No music queued. Playback controls affect the shared bot.
+   a Add  Enter Details  Space Pause  : Actions  ? Help  q Quit

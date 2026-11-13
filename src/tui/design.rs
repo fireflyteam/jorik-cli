@@ -1,18 +1,30 @@
-//! Shared visual language. No icon fonts, images, or terminal-specific extensions.
+//! Shared surfaces, typography and spacing.
 use super::*;
 
 impl Theme {
     pub(super) fn surface(&self) -> Color {
-        tint(self.bg, Color::White, 4)
+        if self.desk_palette {
+            Color::Rgb(28, 34, 50)
+        } else {
+            tint(self.bg, Color::White, 4)
+        }
     }
     pub(super) fn raised(&self) -> Color {
-        tint(self.bg, Color::White, 8)
+        if self.desk_palette {
+            Color::Rgb(35, 43, 61)
+        } else {
+            tint(self.bg, Color::White, 8)
+        }
     }
     pub(super) fn selection(&self) -> Color {
-        tint(self.bg, self.primary, 24)
+        if self.desk_palette {
+            Color::Rgb(70, 57, 102)
+        } else {
+            tint(self.bg, self.primary, 24)
+        }
     }
     pub(super) fn text(&self) -> Color {
-        Color::Rgb(231, 234, 244)
+        Color::Rgb(236, 238, 245)
     }
     pub(super) fn success(&self) -> Color {
         Color::Rgb(118, 218, 180)
@@ -23,6 +35,47 @@ impl Theme {
     pub(super) fn danger(&self) -> Color {
         Color::Rgb(245, 139, 153)
     }
+    pub(super) fn chrome(&self) -> Color {
+        if self.desk_palette {
+            Color::Rgb(22, 27, 40)
+        } else {
+            self.surface()
+        }
+    }
+    pub(super) fn tracklist(&self) -> Color {
+        if self.desk_palette {
+            Color::Rgb(21, 27, 41)
+        } else {
+            self.surface()
+        }
+    }
+    pub(super) fn alternate_row(&self) -> Color {
+        if self.desk_palette {
+            Color::Rgb(32, 41, 59)
+        } else {
+            self.raised()
+        }
+    }
+    pub(super) fn table_header(&self) -> Color {
+        if self.desk_palette {
+            Color::Rgb(48, 60, 86)
+        } else {
+            self.selection()
+        }
+    }
+    pub(super) fn artist(&self) -> Color {
+        Color::Rgb(168, 218, 204)
+    }
+    pub(super) fn album(&self) -> Color {
+        Color::Rgb(201, 194, 226)
+    }
+    pub(super) fn length(&self) -> Color {
+        Color::Rgb(228, 203, 161)
+    }
+}
+
+pub(super) fn padded(area: Rect, horizontal: u16, vertical: u16) -> Rect {
+    area.inner(ratatui::layout::Margin::new(horizontal, vertical))
 }
 
 fn tint(base: Color, accent: Color, percent: u16) -> Color {
@@ -37,11 +90,19 @@ fn tint(base: Color, accent: Color, percent: u16) -> Color {
 pub(super) fn panel<'a>(title: impl Into<Line<'a>>, theme: &Theme, focused: bool) -> Block<'a> {
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(if focused {
-            theme.highlight
-        } else {
-            theme.border
-        }))
+        .border_style(
+            Style::default()
+                .fg(if focused {
+                    theme.highlight
+                } else {
+                    theme.border
+                })
+                .add_modifier(if focused {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        )
         .style(Style::default().bg(theme.surface()).fg(theme.text()))
         .title(title)
         .title_style(

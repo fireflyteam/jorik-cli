@@ -1,8 +1,13 @@
 # Changelog
 
-## 0.5.0-dev.1 (unreleased)
+## 0.5.0 (2026-11-13)
 
 ### Visual design and keyboard UX
+- Integrate the Desk design into the live player: slate canvas, padded playback/session surfaces, metadata queue columns, alternating track backgrounds and a violet selection band.
+- Add structured track metadata, album/length columns, selected-track details on Enter, and explicit `a` or `/` input entry; preserve titles and artists containing separators.
+- Load bounded artwork asynchronously without API credentials, cache decoded covers, reject stale results, and render antialiased artwork with graphics protocols or half-block fallback.
+- Make Desk the default and map previous Standard settings to it; retain other layouts and optional visualization. Display actual queue totals and explicit missing metadata.
+- Keep Escape navigation from Settings and Lyrics independent of background queue errors.
 - Space the sign-in screen with explicit blank rows and wider interior padding; remove the repeated checklist and isolate the legacy notice from the action keys.
 - Raise small-text contrast across themes, soften Emerald accents, and use a filled sign-in action with bright, plain-language instructions.
 - Keep legacy-login notices separate from onboarding; expose safe migration instructions through sign-in help instead of a dense warning paragraph.
@@ -14,6 +19,17 @@
 - Add bounded, accurately wrapped lyrics scrolling, refresh, request coalescing, and track-change invalidation.
 - Preserve HTTP playback state when a WebSocket upgrade fails; invalidate it only when an established live connection disconnects.
 - Add deterministic UI previews, responsive rendering snapshots, compact-screen regression tests, and real 80×24 PTY interaction validation.
+
+### TUI state and runtime hardening
+- Correlate queue reads by session, requested page and state revisions; coalesce refreshes, reject stale completions, and invalidate reads started before successful commands.
+- Track REST, WebSocket, queue, lyrics and authentication work independently; retain Add music queries on rejection or uncertain outcomes without automatically replaying mutations.
+- Display only confirmed repeat state, distinguish stale playback from transport connectivity, and stop interpolation after 30 seconds without a playback snapshot.
+- Keep Settings, Account, Help and cached tracks usable after voice/guild discovery failures; surface recovery actions before long error details.
+- Fetch real 20-track queue pages with `[ ]`; preserve the browsed page when page-zero broadcasts arrive, handle shrinking totals, and distinguish focus when inspecting tracks.
+- Bound text entry and paste, reject silently truncated submissions, edit by grapheme, and replace quadratic horizontal input clipping with linear scanning.
+- Support `NO_COLOR` terminal-default rendering without artwork. Replace the artwork library's potentially orphaned stdin probe with non-reading detection and an explicit `JORIK_ARTWORK_PROTOCOL` override.
+- Use asynchronous terminal events and completion wakeups, one-second idle refreshes and a capped 30-fps visible spectrum; cancel session-bound work on server changes and restore terminal modes through a cleanup guard.
+- Add 22 regression tests and verify color/monochrome PTY flows for focus, details, real paging, failed submissions, resize, quit and Ctrl+C with isolated loopback fixtures.
 
 ### Credential and login hardening
 - Store authentication data in Windows Credential Manager, macOS Keychain, or Linux Secret Service; never silently fall back to plaintext.
@@ -49,10 +65,11 @@
 - Add Linux/Windows/macOS native credential-store CI, isolated installer tests, and an unavailable Linux Secret Service failure test.
 - Locally validate Linux store round trips, overwrite/delete/server isolation, unavailable-store failure, backend type checking, and paired PKCE exchange.
 
-### Release gates still requiring operation/approval
-- Deploy the paired backend before enabling CLI 0.5 login; live Discord consent, denial, cancel/retry, signout and server switching need validation.
-- Run hosted platform CI and test locked native-store UX; local Linux success does not prove Windows/macOS behavior.
-- The first attested tag build must pass signature verification before publication. No 0.5 tag/release or backend deployment is made by this development change.
+### Compatibility and release validation
+- Requires the paired OAuth backend protocol. The maintainer confirmed deployment at `https://jorik.gleckson.com` and live Discord consent, denial, cancel/retry, signout and server-switching validation.
+- Custom servers must deploy the paired protocol before enabling CLI 0.5 login; legacy bearer-query login is unsupported.
+- Release builds are gated on hosted Linux, Windows and macOS checks, including native credential-store round trips. Locked-store behavior remains dependent on the platform provider.
+- Packages must pass signed provenance verification before publication. The hardened bootstrap refuses historical, unattested releases.
 - Sigstore provenance trusts GitHub Actions/OIDC and is not an independent offline publisher key or Windows Authenticode signature.
 
 ## 0.4.2

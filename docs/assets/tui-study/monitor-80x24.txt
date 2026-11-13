@@ -1,0 +1,24 @@
+   JORIK   example.com   Guild 123456789012345678             Connected
+    1 Queue  2 Desk  3 Monitor   OFFLINE STUDY
+   PLAYING  Midnight City
+   M83
+   2:04   ─────────────────────────────────────────────────────────────  4:03
+   ──────────────────────────────────────────────────────────────────────────
+
+ Spectrum preview (simulated)
+
+                   ▅▅             ██                      ▂▂
+          ▆▆       ██          ▃▃ ██          ▅▅          ██
+       ▁▁ ██    ▃▃ ██ ██       ██ ██ ▄▄       ██ ▇▇    ▆▆ ██
+       ██ ██ ▁▁ ██ ██ ██    ▆▆ ██ ██ ██    ▅▅ ██ ██    ██ ██ ▇▇
+    ▃▃ ██ ██ ██ ██ ██ ██ ▆▆ ██ ██ ██ ██ ▄▄ ██ ██ ██ ▇▇ ██ ██ ██ ▅▅
+ ▂▂ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ▄▄
+ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ▆▆
+   Up next   20 loaded
+      #  TITLE                    ARTIST            ALBUM              LENGTH
+      1  Intro                    The xx            xx                 2:07
+   >  2  Nightcall                Kavinsky          OutRun             4:18
+      3  A Real Hero              College           Drive              4:28
+      4  Teardrop                 Massive Attack    Mezzanine          5:30
+   Showing 1–4 of 20 loaded tracks. Total unavailable.
+   a Add  Enter Details  Space Pause  : Actions  ? Help  q Quit
